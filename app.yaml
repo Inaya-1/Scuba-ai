@@ -1,0 +1,27 @@
+runtime: custom
+env: flex
+
+# WebSocket support requires flexible environment
+resources:
+  cpu: 1
+  memory_gb: 0.5
+  disk_size_gb: 10
+
+# Health checks
+liveness_check:
+  path: /health
+  check_interval_sec: 30
+
+readiness_check:
+  path: /health
+  check_interval_sec: 10
+
+# Auto-scaling
+automatic_scaling:
+  min_num_instances: 1
+  max_num_instances: 3
+  cpu_utilization:
+    target_utilization: 0.65
+
+env_variables:
+  PORT: "8080"

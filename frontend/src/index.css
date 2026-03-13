@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+@theme {
+  --color-navy: #134074;
+  --color-navy-dark: #13315C;
+  --color-navy-deepest: #0B2545;
+  --color-steel: #8DA9C4;
+  --color-ice: #EEF4ED;
+  --color-alert-red: #FF5252;
+  --color-safe-green: #69F0AE;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100dvh;
+  background: var(--color-navy-deepest);
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+/* Dive mode locks scroll, landing page allows it */
+body.dive-mode, body.dive-mode #root {
+  overflow: hidden;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@keyframes slide-up {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes slide-down {
+  from { transform: translateY(-100%); }
+  to { transform: translateY(0); }
+}
