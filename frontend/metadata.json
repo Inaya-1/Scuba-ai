@@ -1,0 +1,8 @@
+{
+  "name": "Scuba.ai",
+  "description": "A multimodal AI dive buddy that provides real-time safety alerts, marine life identification, and navigation assistance using vision and audio.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

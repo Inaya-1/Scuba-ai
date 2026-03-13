@@ -1,44 +1,57 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --color-navy: #134074;
-  --color-navy-dark: #13315C;
-  --color-navy-deepest: #0B2545;
-  --color-steel: #8DA9C4;
-  --color-ice: #EEF4ED;
-  --color-alert-red: #FF5252;
-  --color-safe-green: #69F0AE;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-display: "Space Grotesk", sans-serif;
+
+  --color-dive-cyan: #00f2ff;
+  --color-dive-red: #ff3b3b;
+  --color-dive-orange: #ff9d00;
+  --color-dive-bg: #050a0f;
 }
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+@layer base {
+  body {
+    @apply bg-dive-bg text-white font-sans overflow-hidden;
+  }
 }
 
-html, body, #root {
+.glass-panel {
+  @apply bg-black/40 backdrop-blur-md border border-white/10 rounded-2xl;
+}
+
+.hud-text {
+  @apply font-mono uppercase tracking-widest text-[10px] text-white/60;
+}
+
+.hud-value {
+  @apply font-display font-bold text-2xl text-dive-cyan;
+}
+
+@keyframes pulse-cyan {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.1); }
+}
+
+.animate-pulse-cyan {
+  animation: pulse-cyan 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Scanline effect */
+.scanline {
   width: 100%;
-  height: 100dvh;
-  background: var(--color-navy-deepest);
-  font-family: system-ui, -apple-system, sans-serif;
+  height: 100px;
+  z-index: 10;
+  background: linear-gradient(0deg, rgba(0, 242, 255, 0) 0%, rgba(0, 242, 255, 0.05) 50%, rgba(0, 242, 255, 0) 100%);
+  opacity: 0.1;
+  position: absolute;
+  bottom: 100%;
+  animation: scanline 8s linear infinite;
 }
 
-/* Dive mode locks scroll, landing page allows it */
-body.dive-mode, body.dive-mode #root {
-  overflow: hidden;
-}
-
-@keyframes pulse-dot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
-
-@keyframes slide-up {
-  from { transform: translateY(20px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
-}
-
-@keyframes slide-down {
-  from { transform: translateY(-100%); }
-  to { transform: translateY(0); }
+@keyframes scanline {
+  0% { bottom: 100%; }
+  100% { bottom: -100px; }
 }
