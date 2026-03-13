@@ -1,117 +1,75 @@
-import json
-import base64
+"""
+WebSocket message router.
+
+Routes incoming messages to the appropriate agent based on message type:
+  - "frame"       → all three agents in parallel (safety, bio, nav if map cached)
+  - "map_upload"  → NavAgent
+  - "identify"    → BioAgent (user-triggered species ID)
+  - "gauge_read"  → SafetyAgent (explicit gauge photo)
+  - "nav_frame"   → NavAgent (explicit nav check)
+"""
+
+import asyncio
 import logging
-from google import genai
-from app.config import GEMINI_API_KEY
-from app.prompts.system import SYSTEM_PROMPT
-from app.models.messages import AgentOutput
+from app.agents.safety import handle_gauge_frame
+from app.agents.bio import handle_bio_frame, handle_identify
+from app.agents.nav import handle_map_upload, handle_nav_frame, get_cached_map
 
 logger = logging.getLogger(__name__)
 
-client = None
 
+async def route_message(msg_type: str, payload: str, metadata: dict) -> dict | list[dict]:
+    """Route a WebSocket message to the appropriate agent(s)."""
 
-def get_client():
-    global client
-    if client is None:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-    return client
+    if msg_type == "map_upload":
+        return await handle_map_upload(payload, metadata)
 
+    if msg_type == "identify":
+        return await handle_identify(payload, metadata)
 
-async def handle_frame(payload: str, metadata: dict) -> dict:
-    """Process a camera frame through Gemini Vision and return an AgentOutput dict."""
-    try:
-        c = get_client()
+    if msg_type == "gauge_read":
+        return await handle_gauge_frame(payload, metadata)
 
-        image_bytes = base64.b64decode(payload)
+    if msg_type == "nav_frame":
+        return await handle_nav_frame(payload, metadata)
 
-        response = c.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=[
-                {
-                    "role": "user",
-                    "parts": [
-                        {"text": SYSTEM_PROMPT},
-                        {
-                            "inline_data": {
-                                "mime_type": "image/jpeg",
-                                "data": payload,
-                            }
-                        },
-                        {"text": "Analyze this image and respond with the JSON format specified."},
-                    ],
-                }
-            ],
-        )
+    if msg_type == "frame":
+        # Run safety and bio in parallel; add nav if a map is cached
+        tasks = [
+            handle_gauge_frame(payload, metadata),
+            handle_bio_frame(payload, metadata),
+        ]
+        if get_cached_map() is not None:
+            tasks.append(handle_nav_frame(payload, metadata))
 
-        text = response.text.strip()
-        # Strip markdown code fences if present
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-            if text.endswith("```"):
-                text = text[:-3].strip()
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        result = json.loads(text)
-        output = AgentOutput(**result)
-        return output.model_dump()
+        # Filter out errors, keep valid responses, return highest-priority one
+        valid = []
+        for r in results:
+            if isinstance(r, Exception):
+                logger.error(f"Agent error: {r}")
+            elif isinstance(r, dict):
+                valid.append(r)
 
-    except json.JSONDecodeError as e:
-        logger.warning(f"Gemini returned non-JSON: {e}")
-        return AgentOutput(
-            agent="manager",
-            type="info",
-            content=text if 'text' in dir() else "Could not parse response",
-            priority=1,
-        ).model_dump()
+        if not valid:
+            return {
+                "agent": "manager",
+                "type": "info",
+                "content": "Analysis unavailable.",
+                "priority": 0,
+                "metadata": {},
+            }
 
-    except Exception as e:
-        logger.error(f"Gemini API error: {e}")
-        return AgentOutput(
-            agent="manager",
-            type="info",
-            content=f"Analysis unavailable: {str(e)[:100]}",
-            priority=0,
-        ).model_dump()
+        # Return the highest-priority result to keep the overlay clean
+        valid.sort(key=lambda x: x.get("priority", 0), reverse=True)
+        best = valid[0]
 
+        # If there's a hazard, always surface it regardless of other results
+        hazards = [r for r in valid if r.get("type") == "hazard"]
+        if hazards:
+            best = hazards[0]
 
-async def handle_map_upload(payload: str, metadata: dict) -> dict:
-    """Process a map image upload."""
-    try:
-        c = get_client()
+        return best
 
-        response = c.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=[
-                {
-                    "role": "user",
-                    "parts": [
-                        {"text": "You are Scuba.ai, a dive navigation assistant. Analyze this hand-drawn dive site map. Identify landmarks, entry/exit points, and suggest a route. Respond ONLY with JSON: {\"agent\": \"nav\", \"type\": \"navigation\", \"content\": \"your analysis\", \"priority\": 5, \"metadata\": {\"landmarks\": [], \"entry_point\": \"\", \"exit_point\": \"\"}}"},
-                        {
-                            "inline_data": {
-                                "mime_type": "image/jpeg",
-                                "data": payload,
-                            }
-                        },
-                    ],
-                }
-            ],
-        )
-
-        text = response.text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-            if text.endswith("```"):
-                text = text[:-3].strip()
-
-        result = json.loads(text)
-        output = AgentOutput(**result)
-        return output.model_dump()
-
-    except Exception as e:
-        logger.error(f"Map analysis error: {e}")
-        return AgentOutput(
-            agent="nav",
-            type="navigation",
-            content=f"Could not analyze map: {str(e)[:100]}",
-            priority=0,
-        ).model_dump()
+    return {"error": f"Unknown message type: {msg_type}"}

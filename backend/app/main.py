@@ -5,7 +5,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from app.ws_handler import handle_frame, handle_map_upload
+from app.ws_handler import route_message
+from app.config import GEMINI_API_KEY
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,6 +30,13 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/api/token")
+async def get_token():
+    """Serve the Gemini API key to authenticated frontend clients.
+    In production, gate this behind auth (session cookie, JWT, etc.)."""
+    return {"apiKey": GEMINI_API_KEY}
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -47,14 +55,8 @@ async def websocket_endpoint(websocket: WebSocket):
             payload = data.get("payload", "")
             metadata = data.get("metadata", {})
 
-            if msg_type == "frame":
-                result = await handle_frame(payload, metadata)
-                await websocket.send_json(result)
-            elif msg_type == "map_upload":
-                result = await handle_map_upload(payload, metadata)
-                await websocket.send_json(result)
-            else:
-                await websocket.send_json({"error": f"Unknown message type: {msg_type}"})
+            result = await route_message(msg_type, payload, metadata)
+            await websocket.send_json(result)
 
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
