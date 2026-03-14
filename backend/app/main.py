@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from app.ws_handler import route_message
 from app.config import GEMINI_API_KEY
+from app.agents.bio import get_species_log
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -35,6 +36,12 @@ async def get_token():
     """Serve the Gemini API key to authenticated frontend clients.
     In production, gate this behind auth (session cookie, JWT, etc.)."""
     return {"apiKey": GEMINI_API_KEY}
+
+
+@app.get("/api/species-log")
+async def species_log():
+    """Return all species identified this session."""
+    return {"species": get_species_log()}
 
 
 @app.websocket("/ws")

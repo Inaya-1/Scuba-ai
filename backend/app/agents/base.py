@@ -1,6 +1,7 @@
 import json
 import logging
 from google import genai
+from google.genai.types import GenerateContentConfig, ThinkingConfig
 from app.config import GEMINI_API_KEY
 from app.models.messages import AgentOutput
 
@@ -21,7 +22,7 @@ async def call_gemini(system_prompt: str, image_b64: str, user_text: str) -> dic
     c = get_client()
 
     response = c.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash",
         contents=[
             {
                 "role": "user",
@@ -37,6 +38,9 @@ async def call_gemini(system_prompt: str, image_b64: str, user_text: str) -> dic
                 ],
             }
         ],
+        config=GenerateContentConfig(
+            thinking_config=ThinkingConfig(thinking_budget=0),
+        ),
     )
 
     text = response.text.strip()

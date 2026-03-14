@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { AnimatePresence } from 'motion/react';
-import { Mic, Map as MapIcon, Settings, Info, X, Navigation } from 'lucide-react';
+import { Mic, Map as MapIcon, Settings, Info, X, Navigation, Fish, Upload } from 'lucide-react';
 import { LandingPage } from './components/LandingPage';
 import { CameraFeed } from './components/CameraFeed';
 import { HUD } from './components/HUD';
@@ -27,7 +27,9 @@ export default function App() {
   });
   const [responses, setResponses] = useState<AgentResponse[]>([]);
   const [showMap, setShowMap] = useState(false);
+  const [demoVideo, setDemoVideo] = useState<string | null>(null);
   const isListeningRef = useRef(false);
+  const demoInputRef = useRef<HTMLInputElement>(null);
 
   // ── Backend WebSocket: structured analysis + map uploads ──
   useEffect(() => {
@@ -59,34 +61,19 @@ export default function App() {
     };
   }, [isStarted]);
 
-  // ── Gemini Live API: real-time audio/video stream ──
+  // ── Gemini Live API: disabled to conserve free-tier quota ──
+  // The Live API connection itself consumes gemini-2.0-flash quota on connect.
+  // All identification now goes through the backend (gemini-2.5-flash).
+  // Re-enable this when you have a paid API key or fresh quota.
+
+  // ── Auto-dismiss response cards after 8 seconds ──
   useEffect(() => {
-    if (!isStarted) return;
-
-    geminiLive.connect({
-      onTextResponse: (text) => {
-        setResponses(prev => [{
-          agent: 'manager',
-          type: 'info',
-          content: text,
-          priority: 'medium',
-        }, ...prev].slice(0, 3));
-      },
-      onAudioData: (pcmBase64) => {
-        geminiLive.playAudioChunk(pcmBase64);
-      },
-      onError: (err) => {
-        console.error("[App] Live API error:", err);
-      },
-      onConnect: () => setLiveConnected(true),
-      onDisconnect: () => setLiveConnected(false),
-    });
-
-    return () => {
-      geminiLive.disconnect();
-      setLiveConnected(false);
-    };
-  }, [isStarted]);
+    if (responses.length === 0) return;
+    const timer = setTimeout(() => {
+      setResponses(prev => prev.slice(0, -1));
+    }, 8000);
+    return () => clearTimeout(timer);
+  }, [responses]);
 
   // ── Simulate dive metrics ──
   useEffect(() => {
@@ -106,16 +93,38 @@ export default function App() {
 
   // ── Frame handler: send to both backend (slow/structured) and Live API (fast/realtime) ──
   const frameCountRef = useRef(0);
+  const latestFrameRef = useRef('');
   const handleFrame = useCallback((base64: string) => {
+    latestFrameRef.current = base64;
     frameCountRef.current += 1;
 
-    // Every frame goes to Live API for real-time awareness (every 2s from CameraFeed)
-    geminiLive.sendFrame(base64);
+    // Frame streaming to Live API disabled to conserve quota.
+    // Frames are cached in latestFrameRef for on-demand identification via Fish button.
+  }, []);
 
-    // Every 3rd frame (6s) goes to backend for structured JSON analysis
-    if (frameCountRef.current % 3 === 0) {
-      scubaSocket.sendFrame(base64);
+  // ── Demo mode: upload video file ──
+  const handleDemoUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      setDemoVideo(url);
     }
+  }, []);
+
+  // ── Marine ID: "What is this?" trigger ──
+  const handleIdentify = useCallback(() => {
+    if (!latestFrameRef.current) return;
+
+    // Immediate loading feedback
+    setResponses(prev => [{
+      agent: 'bio',
+      type: 'info',
+      content: 'Identifying species...',
+      priority: 'low',
+    }, ...prev].slice(0, 3));
+
+    // Use backend (gemini-2.5-flash with thinking disabled) — reliable quota
+    scubaSocket.sendIdentify(latestFrameRef.current, "What is this?");
   }, []);
 
   // ── Push-to-talk: capture mic audio and stream to Live API ──
@@ -149,12 +158,12 @@ export default function App() {
 
       {isStarted && (
         <>
-          <CameraFeed onFrame={handleFrame} isStreaming={isStarted} />
+          <CameraFeed onFrame={handleFrame} onTap={handleIdentify} isStreaming={isStarted} demoVideoUrl={demoVideo} />
           <HUD state={diveState} />
           <ResponseOverlay responses={responses} />
 
-          {/* Connection indicators */}
-          <div className="absolute top-6 left-6 z-30 flex flex-col gap-2">
+          {/* Connection indicators — positioned below HUD top bar */}
+          <div className="absolute top-20 left-6 z-30 flex flex-col gap-2">
             <div className="flex items-center gap-2 px-3 py-1 glass-panel rounded-full">
               <div className={`w-2 h-2 rounded-full ${backendConnected ? 'bg-green-400 animate-pulse' : 'bg-dive-red'}`} />
               <span className="hud-text text-[8px]">BACKEND</span>
@@ -188,9 +197,26 @@ export default function App() {
               <Mic className={`w-8 h-8 ${diveState.isListening ? 'animate-pulse' : ''}`} />
             </button>
 
-            <button className="p-4 rounded-full glass-panel text-white/60 active:scale-90">
-              <Settings className="w-6 h-6" />
+            <button
+              onClick={handleIdentify}
+              className="p-4 rounded-full bg-dive-cyan/20 border border-dive-cyan/50 text-dive-cyan active:scale-90 active:bg-dive-cyan/40 transition-all shadow-[0_0_15px_rgba(0,242,255,0.2)]"
+            >
+              <Fish className="w-6 h-6" />
             </button>
+
+            <button
+              onClick={() => demoInputRef.current?.click()}
+              className={`p-4 rounded-full glass-panel transition-all active:scale-90 ${demoVideo ? 'text-dive-cyan border-dive-cyan/50' : 'text-white/60'}`}
+            >
+              <Upload className="w-6 h-6" />
+            </button>
+            <input
+              ref={demoInputRef}
+              type="file"
+              accept="video/*"
+              onChange={handleDemoUpload}
+              className="hidden"
+            />
           </div>
 
           {/* Map Overlay */}
