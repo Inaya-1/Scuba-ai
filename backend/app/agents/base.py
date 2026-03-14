@@ -21,7 +21,7 @@ async def call_gemini(system_prompt: str, image_b64: str, user_text: str) -> dic
     c = get_client()
 
     response = c.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash",
         contents=[
             {
                 "role": "user",

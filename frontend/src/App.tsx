@@ -28,6 +28,8 @@ export default function App() {
   const [responses, setResponses] = useState<AgentResponse[]>([]);
   const [showMap, setShowMap] = useState(false);
   const isListeningRef = useRef(false);
+  // Once the backend sends real gauge data, stop overwriting with simulation
+  const hasRealGaugeData = useRef(false);
 
   // ── Backend WebSocket: structured analysis + map uploads ──
   useEffect(() => {
@@ -38,6 +40,10 @@ export default function App() {
         setResponses(prev => [res, ...prev].slice(0, 3));
 
         if (res.metadata) {
+          const m = res.metadata!;
+          const hasGauge = m.depth_m != null || m.depth_ft != null || m.psi != null || m.bar != null;
+          if (hasGauge) hasRealGaugeData.current = true;
+
           setDiveState(prev => ({
             ...prev,
             ...(res.metadata!.depth_m != null && { depth: res.metadata!.depth_m }),
@@ -88,7 +94,7 @@ export default function App() {
     };
   }, [isStarted]);
 
-  // ── Simulate dive metrics ──
+  // ── Simulate dive metrics (stop depth/air drift once real gauge data arrives) ──
   useEffect(() => {
     if (!isStarted) return;
 
@@ -96,7 +102,10 @@ export default function App() {
       setDiveState(prev => ({
         ...prev,
         bottomTime: prev.bottomTime + 1,
-        depth: Math.max(0, prev.depth + (Math.random() - 0.5) * 0.1),
+        // Only simulate depth drift when no real gauge data from backend
+        ...(hasRealGaugeData.current ? {} : {
+          depth: Math.max(0, prev.depth + (Math.random() - 0.5) * 0.1),
+        }),
         heading: (prev.heading + Math.floor((Math.random() - 0.5) * 2) + 360) % 360,
       }));
     }, 1000);

@@ -32,7 +32,7 @@ export class GeminiLive {
       this.ai = new GoogleGenAI({ apiKey });
 
       this.session = await this.ai.live.connect({
-        model: "gemini-2.0-flash-live-001",
+        model: "gemini-2.5-flash-live-001",
         callbacks: {
           onopen: () => {
             console.log("[Live] Session opened");
