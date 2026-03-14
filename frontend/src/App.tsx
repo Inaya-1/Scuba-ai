@@ -46,11 +46,12 @@ export default function App() {
 
           setDiveState(prev => ({
             ...prev,
-            ...(res.metadata!.depth_m != null && { depth: res.metadata!.depth_m }),
-            ...(res.metadata!.depth_ft != null && { depth: res.metadata!.depth_ft * 0.3048 }),
-            ...(res.metadata!.psi != null && { airPressure: Math.round(res.metadata!.psi / 14.5) }),
-            ...(res.metadata!.bar != null && { airPressure: res.metadata!.bar }),
-            ...(res.metadata!.temp_c != null && { waterTemp: res.metadata!.temp_c }),
+            ...(m.depth_m != null && { depth: m.depth_m }),
+            ...(m.depth_ft != null && { depth: m.depth_ft * 0.3048 }),
+            ...(m.psi != null && { airPressure: Math.round(m.psi / 14.5) }),
+            ...(m.bar != null && { airPressure: m.bar }),
+            ...(m.temp_c != null && { waterTemp: m.temp_c }),
+            ...(m.dive_time_min != null && { bottomTime: m.dive_time_min * 60 }),
           }));
         }
       },
