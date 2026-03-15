@@ -105,3 +105,51 @@ The app establishes a **Stateful WebSocket (WSS)** connection to the **Gemini Mu
    - If compass fails silently, nav is broken.
    - Add a visible "Enable compass" prompt instead of silent degradation.
 
+
+---
+
+## Architecture: Unified Live Orchestrator
+
+### Overview
+The Gemini Live API acts as a **unified orchestrator** — the single voice and personality the diver interacts with. Backend specialist agents (safety, bio, nav) produce structured JSON analysis, which is piped into the Live session as context. The Live API triages agent intelligence and decides what to narrate, when, and how urgently.
+
+### Data Flow
+```
+Camera frame (every 2s)
+  ├─ Frontend → Gemini Live API (persistent bidirectional stream)
+  │    • Sees every frame for real-time visual awareness
+  │    • Receives mic audio for voice conversation
+  │    • Responds with voice (Zephyr) + text
+  │
+  └─ Frontend → Backend WS (every 6s, every 3rd frame)
+       ├─ SafetyAgent → gemini-2.5-flash (REST) → structured JSON
+       ├─ NavAgent → gemini-2.5-flash (REST) → structured JSON (if map cached)
+       └─ BioAgent → gemini-2.5-flash (REST) → structured JSON (Fish button only)
+              │
+              ▼
+       Agent response piped to Live API via sendAgentReport()
+       Live API triages and narrates to diver
+```
+
+### How Agent Reports Are Injected
+When a backend agent responds, `App.tsx` calls `geminiLive.sendAgentReport()` which formats the response as:
+```
+AGENT REPORT [SAFETY] priority=9 type=hazard: RAPID ASCENT detected | metadata: {...}
+```
+This is sent as a `clientContent` text message into the Live session. The Live API's system prompt instructs it to triage by priority and translate into natural dive buddy speech — never reading JSON literally.
+
+### Priority Triage Rules (in system prompt)
+| Priority | Behavior |
+|----------|----------|
+| 7-9 (critical) | Speak IMMEDIATELY, interrupt anything else. Also shown as HUD card. |
+| 4-6 (medium) | Mention conversationally when appropriate |
+| 0-3 (low/info) | Absorb as background context, don't narrate unless asked |
+
+### Agent Cards Toggle
+A `MessageSquare` button in the control bar toggles `showAgentCards`:
+- **Off (default):** Agent responses are only piped to Live API for narration. Critical safety alerts still show as cards.
+- **On:** All agent response cards are displayed alongside Live voice — useful for debugging or when the diver wants visual confirmation.
+
+### Key Files
+- `frontend/src/services/liveApi.ts` — `sendAgentReport()` method, updated system prompt
+- `frontend/src/App.tsx` — pipes `onResponse` to Live API, `showAgentCards` toggle

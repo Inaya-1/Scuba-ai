@@ -8,6 +8,7 @@ export interface AgentResponse {
   content: string;
   priority: Priority;
   metadata?: Record<string, any>;
+  _ts?: number;
 }
 
 export interface DiveState {
