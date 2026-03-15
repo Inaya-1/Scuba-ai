@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from app.ws_handler import route_message
 from app.config import GEMINI_API_KEY, ACCESS_CODE
+from app.agents.bio import get_species_log
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -49,6 +50,12 @@ async def get_token(req: AccessRequest):
     if req.code != ACCESS_CODE:
         return {"error": "Invalid access code"}
     return {"apiKey": GEMINI_API_KEY}
+
+
+@app.get("/api/species-log")
+async def species_log():
+    """Return all species identified this session."""
+    return {"species": get_species_log()}
 
 
 @app.websocket("/ws")

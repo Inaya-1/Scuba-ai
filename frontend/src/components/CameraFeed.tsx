@@ -1,17 +1,41 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useImperativeHandle, forwardRef } from 'react';
 import { Camera, CameraOff } from 'lucide-react';
 
 interface CameraFeedProps {
   onFrame: (base64: string) => void;
+  onTap?: () => void;
   isStreaming: boolean;
+  demoVideoUrl?: string | null;
 }
 
-export const CameraFeed: React.FC<CameraFeedProps> = ({ onFrame, isStreaming }) => {
+export interface CameraFeedHandle {
+  captureFrame: () => string | null;
+}
+
+export const CameraFeed = forwardRef<CameraFeedHandle, CameraFeedProps>(({ onFrame, onTap, isStreaming, demoVideoUrl }, ref) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Expose captureFrame for on-demand fresh frame capture
+  useImperativeHandle(ref, () => ({
+    captureFrame: () => {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      if (!video || !canvas || !video.videoWidth) return null;
+      const context = canvas.getContext('2d');
+      if (!context) return null;
+      const scale = Math.min(640 / video.videoWidth, 360 / video.videoHeight, 1);
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
+    },
+  }));
   const [error, setError] = useState<string | null>(null);
 
+  // Camera mode
   useEffect(() => {
+    if (demoVideoUrl) return; // Skip camera when in demo mode
     let stream: MediaStream | null = null;
 
     const startCamera = async () => {
@@ -36,7 +60,16 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ onFrame, isStreaming }) 
         stream.getTracks().forEach(track => track.stop());
       }
     };
-  }, []);
+  }, [demoVideoUrl]);
+
+  // Demo video mode
+  useEffect(() => {
+    if (!demoVideoUrl || !videoRef.current) return;
+    videoRef.current.srcObject = null;
+    videoRef.current.src = demoVideoUrl;
+    videoRef.current.loop = true;
+    videoRef.current.play().catch(console.error);
+  }, [demoVideoUrl]);
 
   useEffect(() => {
     if (!isStreaming) return;
@@ -48,11 +81,13 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ onFrame, isStreaming }) 
         const context = canvas.getContext('2d');
 
         if (context && video.videoWidth) {
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
+          // Downscale to 640x360 for faster upload and API processing
+          const scale = Math.min(640 / video.videoWidth, 360 / video.videoHeight, 1);
+          canvas.width = Math.round(video.videoWidth * scale);
+          canvas.height = Math.round(video.videoHeight * scale);
           context.drawImage(video, 0, 0, canvas.width, canvas.height);
-          
-          const base64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+
+          const base64 = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
           onFrame(base64);
         }
       }
@@ -62,7 +97,7 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ onFrame, isStreaming }) 
   }, [isStreaming, onFrame]);
 
   return (
-    <div className="relative w-full h-full bg-black overflow-hidden">
+    <div className="relative w-full h-full bg-black overflow-hidden" onClick={() => onTap?.()}>
       {error ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center text-dive-red p-6 text-center">
           <CameraOff className="w-12 h-12 mb-4" />
@@ -85,14 +120,8 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ onFrame, isStreaming }) 
           {/* Scanline */}
           <div className="scanline" />
           
-          {/* Crosshair */}
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-20">
-            <div className="w-12 h-[1px] bg-dive-cyan" />
-            <div className="h-12 w-[1px] bg-dive-cyan absolute" />
-            <div className="w-48 h-48 border border-dive-cyan rounded-full opacity-50" />
-          </div>
         </>
       )}
     </div>
   );
-};
+});

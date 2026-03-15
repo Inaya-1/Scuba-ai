@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 from google import genai
+from google.genai.types import GenerateContentConfig, ThinkingConfig
 from app.config import GEMINI_API_KEY
 from app.models.messages import AgentOutput
 
@@ -37,6 +38,9 @@ def _sync_generate(system_prompt: str, image_b64: str, user_text: str) -> str:
                 ],
             }
         ],
+        config=GenerateContentConfig(
+            thinking_config=ThinkingConfig(thinking_budget=0),
+        ),
     )
     return response.text
 

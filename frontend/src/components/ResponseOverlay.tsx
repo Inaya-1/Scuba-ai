@@ -31,6 +31,33 @@ export const ResponseOverlay: React.FC<ResponseOverlayProps> = ({ responses }) =
           <p className="text-sm font-medium leading-relaxed">
             {res.content}
           </p>
+          {res.type === 'species' && res.metadata && (
+            <div className="mt-2 space-y-1.5">
+              {res.metadata.scientific_name && (
+                <p className="text-[10px] font-mono text-dive-cyan/60 italic">
+                  {res.metadata.scientific_name}
+                </p>
+              )}
+              {res.metadata.safety_level && (
+                <div className={`inline-block px-2 py-0.5 rounded text-[9px] font-bold uppercase ${
+                  res.metadata.safety_level === 'dangerous' ? 'bg-dive-red/20 text-dive-red' :
+                  res.metadata.safety_level === 'caution' ? 'bg-dive-orange/20 text-dive-orange' :
+                  'bg-green-500/20 text-green-400'
+                }`}>
+                  {res.metadata.safety_level}
+                </div>
+              )}
+              {res.metadata.fun_fact && (
+                <p className="text-[11px] text-white/50 leading-snug">{res.metadata.fun_fact}</p>
+              )}
+              {res.metadata.safety_level === 'dangerous' && (
+                <div className="flex items-center gap-1 text-dive-red font-bold text-[10px] uppercase animate-pulse">
+                  <AlertTriangle className="w-3 h-3" />
+                  DANGEROUS — KEEP DISTANCE
+                </div>
+              )}
+            </div>
+          )}
           {res.type === 'hazard' && (
             <div className="mt-2 flex items-center gap-1 text-dive-red font-bold text-[10px] uppercase">
               <AlertTriangle className="w-3 h-3" />

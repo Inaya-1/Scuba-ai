@@ -1,3 +1,5 @@
 .DS_Store
+/backend/.env
+
 # Deployment config with secrets
 app.yaml
