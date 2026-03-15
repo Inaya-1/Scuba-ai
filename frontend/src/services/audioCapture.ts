@@ -1,10 +1,12 @@
 /**
  * Captures microphone audio as base64-encoded 16kHz 16-bit PCM chunks,
  * suitable for streaming to the Gemini Live API.
+ * Uses AudioWorkletProcessor when available, falls back to ScriptProcessorNode.
  */
 export class AudioCapture {
   private stream: MediaStream | null = null;
   private context: AudioContext | null = null;
+  private workletNode: AudioWorkletNode | null = null;
   private processor: ScriptProcessorNode | null = null;
   private onChunk: ((base64Pcm: string) => void) | null = null;
 
@@ -18,7 +20,23 @@ export class AudioCapture {
     this.context = new AudioContext({ sampleRate: 16000 });
     const source = this.context.createMediaStreamSource(this.stream);
 
-    // 4096 samples per buffer at 16kHz = ~256ms chunks
+    // Try AudioWorklet first (modern), fall back to ScriptProcessor (deprecated)
+    if (this.context.audioWorklet) {
+      try {
+        await this.context.audioWorklet.addModule('/pcm-worklet.js');
+        this.workletNode = new AudioWorkletNode(this.context, 'pcm-processor');
+        this.workletNode.port.onmessage = (e) => {
+          this.onChunk?.(e.data);
+        };
+        source.connect(this.workletNode);
+        this.workletNode.connect(this.context.destination);
+        return;
+      } catch (err) {
+        console.warn('[AudioCapture] AudioWorklet failed, falling back to ScriptProcessor:', err);
+      }
+    }
+
+    // Fallback: ScriptProcessorNode (deprecated but widely supported)
     this.processor = this.context.createScriptProcessor(4096, 1, 1);
     this.processor.onaudioprocess = (e) => {
       const float32 = e.inputBuffer.getChannelData(0);
@@ -27,7 +45,6 @@ export class AudioCapture {
         pcm16[i] = Math.max(-32768, Math.min(32767, Math.round(float32[i] * 32768)));
       }
 
-      // Convert to base64
       const bytes = new Uint8Array(pcm16.buffer);
       let binary = "";
       for (let i = 0; i < bytes.length; i++) {
@@ -41,6 +58,8 @@ export class AudioCapture {
   }
 
   stop() {
+    this.workletNode?.disconnect();
+    this.workletNode = null;
     this.processor?.disconnect();
     this.processor = null;
     this.stream?.getTracks().forEach((t) => t.stop());

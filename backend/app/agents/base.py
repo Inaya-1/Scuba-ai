@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from google import genai
@@ -16,10 +17,9 @@ def get_client() -> genai.Client:
     return _client
 
 
-async def call_gemini(system_prompt: str, image_b64: str, user_text: str) -> dict:
-    """Shared helper: sends an image + text to Gemini Vision and parses the JSON response."""
+def _sync_generate(system_prompt: str, image_b64: str, user_text: str) -> str:
+    """Synchronous Gemini call — runs in a thread pool to avoid blocking the event loop."""
     c = get_client()
-
     response = c.models.generate_content(
         model="gemini-2.5-flash",
         contents=[
@@ -38,8 +38,14 @@ async def call_gemini(system_prompt: str, image_b64: str, user_text: str) -> dic
             }
         ],
     )
+    return response.text
 
-    text = response.text.strip()
+
+async def call_gemini(system_prompt: str, image_b64: str, user_text: str) -> dict:
+    """Shared helper: sends an image + text to Gemini Vision and parses the JSON response."""
+    raw = await asyncio.to_thread(_sync_generate, system_prompt, image_b64, user_text)
+
+    text = raw.strip()
     # Strip markdown code fences
     if text.startswith("```"):
         text = text.split("\n", 1)[1] if "\n" in text else text[3:]

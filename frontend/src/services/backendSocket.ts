@@ -29,6 +29,8 @@ export class ScubaSocket {
   private callbacks: ConnectionCallbacks | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private _shouldReconnect = false;
+  private _reconnectDelay = 1000;
+  private _reconnectAttempt = 0;
 
   get connected(): boolean {
     return this.ws?.readyState === WebSocket.OPEN;
@@ -37,6 +39,8 @@ export class ScubaSocket {
   connect(callbacks: ConnectionCallbacks) {
     this.callbacks = callbacks;
     this._shouldReconnect = true;
+    this._reconnectDelay = 1000;
+    this._reconnectAttempt = 0;
     this._connect();
   }
 
@@ -50,6 +54,8 @@ export class ScubaSocket {
 
     ws.onopen = () => {
       console.log("[WS] Connected to backend");
+      this._reconnectDelay = 1000;
+      this._reconnectAttempt = 0;
       this.callbacks?.onConnect();
     };
 
@@ -70,7 +76,10 @@ export class ScubaSocket {
       console.log("[WS] Disconnected");
       this.callbacks?.onDisconnect();
       if (this._shouldReconnect) {
-        this.reconnectTimer = setTimeout(() => this._connect(), 3000);
+        this._reconnectAttempt++;
+        console.log(`[WS] Reconnecting in ${this._reconnectDelay}ms (attempt ${this._reconnectAttempt})`);
+        this.reconnectTimer = setTimeout(() => this._connect(), this._reconnectDelay);
+        this._reconnectDelay = Math.min(this._reconnectDelay * 2, 30000);
       }
     };
 
@@ -84,12 +93,12 @@ export class ScubaSocket {
   }
 
   /** Send a camera frame for multi-agent analysis (safety + bio + nav) */
-  sendFrame(base64: string, heading?: number) {
+  sendFrame(base64: string, heading?: number, accel?: number) {
     if (!this.connected) return;
     this.ws!.send(JSON.stringify({
       type: "frame",
       payload: base64,
-      metadata: { timestamp: Date.now(), heading },
+      metadata: { timestamp: Date.now(), heading, accel },
     }));
   }
 

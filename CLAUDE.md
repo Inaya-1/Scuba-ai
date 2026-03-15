@@ -60,3 +60,48 @@ The app establishes a **Stateful WebSocket (WSS)** connection to the **Gemini Mu
 * **Cloud Run:** Powers the frontend web-socket proxy.
 * **Firestore:** Stores user dive logs and historical whiteboard maps for persistent sessions.
 
+---
+
+## 🔍 Codebase Audit — Improvement Items
+
+### 🔴 High Impact (Demo-Breaking)
+
+1. **Async Gemini calls block the event loop** (`base.py`)
+   - `generate_content()` is synchronous inside an async function. Every agent call freezes the entire backend.
+   - **Fix:** Wrap in `asyncio.to_thread()` for instant responsiveness improvement.
+
+2. **Ascent rate false alarms** (`safety.py`)
+   - One bad gauge reading triggers "RAPID ASCENT" because it only compares 2 readings.
+   - **Fix:** Smoothing over 3+ readings eliminates false CRITICAL alerts during a demo.
+
+3. **No reconnection logic** (`backendSocket.ts`)
+   - If the WebSocket drops mid-dive, it stays dead.
+   - **Fix:** Adding exponential backoff reconnection would make the demo resilient.
+
+### 🟡 High Value (Hackathon Differentiators)
+
+4. **Dive history with Firestore**
+   - Store species log, gauge readings, route data per dive. Show a post-dive summary.
+   - This is a strong demo moment ("here's everything Scoobi tracked during your dive").
+
+5. **Device motion sensors for odometry**
+   - Accelerometer/gyro via `DeviceMotionEvent` would dramatically improve distance estimates vs. pure Gemini visual guessing.
+   - Fuse both signals.
+
+6. **HUD warning colors**
+   - The HUD shows depth/air/temp as static cyan numbers.
+   - Color-coding them (green → yellow → red based on thresholds) would make safety alerts visually immediate without reading text.
+
+### 🟢 Polish (Judges Love This)
+
+7. **`ScriptProcessorNode` → `AudioWorkletProcessor`**
+   - The current audio capture uses a deprecated API. Modern browsers warn about it in console.
+
+8. **Unknown species fallback** (`bio.py`)
+   - Currently returns generic text.
+   - Should say "I can't identify this — try a clearer photo" with confidence score.
+
+9. **Compass permission UX**
+   - If compass fails silently, nav is broken.
+   - Add a visible "Enable compass" prompt instead of silent degradation.
+
