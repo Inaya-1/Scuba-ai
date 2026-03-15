@@ -19,6 +19,7 @@ export default function App() {
   const [isStarted, setIsStarted] = useState(false);
   const [backendConnected, setBackendConnected] = useState(false);
   const [liveConnected, setLiveConnected] = useState(false);
+  const [compassAvailable, setCompassAvailable] = useState(true);
   const [diveState, setDiveState] = useState<DiveState>({
     depth: 12.4,
     airPressure: 185,
@@ -43,6 +44,7 @@ export default function App() {
   const mapLockedRef = useRef(false);
   const isListeningRef = useRef(false);
   const headingRef = useRef(245);
+  const accelRef = useRef(0);
   // Once the backend sends real gauge data, stop overwriting with simulation
   const hasRealGaugeData = useRef(false);
 
@@ -171,13 +173,42 @@ export default function App() {
       (DeviceOrientationEvent as any).requestPermission().then((state: string) => {
         if (state === 'granted') {
           window.addEventListener('deviceorientation', handleOrientation);
+        } else {
+          setCompassAvailable(false);
         }
+      }).catch(() => {
+        setCompassAvailable(false);
       });
-    } else {
+    } else if ('DeviceOrientationEvent' in window) {
       window.addEventListener('deviceorientation', handleOrientation);
+      // If no readings come in after 3s, compass is probably unavailable (laptop)
+      const timeout = setTimeout(() => {
+        if (headingRef.current === 245) setCompassAvailable(false);
+      }, 3000);
+      return () => {
+        clearTimeout(timeout);
+        window.removeEventListener('deviceorientation', handleOrientation);
+      };
+    } else {
+      setCompassAvailable(false);
     }
 
     return () => window.removeEventListener('deviceorientation', handleOrientation);
+  }, [isStarted]);
+
+  // ── Device motion for odometry (accelerometer) ──
+  useEffect(() => {
+    if (!isStarted) return;
+
+    const handleMotion = (e: DeviceMotionEvent) => {
+      const a = e.acceleration;
+      if (a && a.x != null && a.y != null && a.z != null) {
+        accelRef.current = Math.round(Math.sqrt(a.x ** 2 + a.y ** 2 + a.z ** 2) * 100) / 100;
+      }
+    };
+
+    window.addEventListener('devicemotion', handleMotion);
+    return () => window.removeEventListener('devicemotion', handleMotion);
   }, [isStarted]);
 
   // ── Frame handler: send to both backend (slow/structured) and Live API (fast/realtime) ──
@@ -190,7 +221,7 @@ export default function App() {
 
     // Every 3rd frame (6s) goes to backend for structured JSON analysis
     if (frameCountRef.current % 3 === 0) {
-      scubaSocket.sendFrame(base64, headingRef.current);
+      scubaSocket.sendFrame(base64, headingRef.current, accelRef.current);
     }
   }, []);
 
@@ -248,7 +279,7 @@ export default function App() {
       {isStarted && (
         <>
           <CameraFeed onFrame={handleFrame} isStreaming={isStarted} />
-          <HUD state={diveState} />
+          <HUD state={diveState} compassAvailable={compassAvailable} />
           <ResponseOverlay responses={responses} />
 
           {/* Connection indicators */}
