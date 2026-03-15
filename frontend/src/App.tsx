@@ -59,15 +59,19 @@ export default function App() {
     scubaSocket.connect({
       onResponse: (res) => {
         setResponses(prev => {
-          // Nav responses replace the existing nav card instead of stacking
+          // Safety and nav responses replace their existing card instead of stacking
+          if (res.agent === 'safety') {
+            const withoutSafety = prev.filter(r => r.agent !== 'safety');
+            return [res, ...withoutSafety].slice(0, 3);
+          }
           if (res.agent === 'nav') {
             const withoutNav = prev.filter(r => r.agent !== 'nav');
             return [res, ...withoutNav].slice(0, 3);
           }
           // Replace "Identifying species..." loading cards when a real bio response arrives
           if (res.agent === 'bio') {
-            const filtered = prev.filter(r => !(r.agent === 'bio' && r.content === 'Identifying species...'));
-            return [res, ...filtered].slice(0, 3);
+            const withoutBio = prev.filter(r => r.agent !== 'bio');
+            return [res, ...withoutBio].slice(0, 3);
           }
           return [res, ...prev].slice(0, 3);
         });
@@ -322,7 +326,7 @@ export default function App() {
 
       {isStarted && (
         <>
-          <CameraFeed ref={cameraRef} onFrame={handleFrame} onTap={handleIdentify} isStreaming={isStarted} demoVideoUrl={demoVideo} />
+          <CameraFeed ref={cameraRef} onFrame={handleFrame} isStreaming={isStarted} demoVideoUrl={demoVideo} />
           <HUD state={diveState} compassAvailable={compassAvailable} />
           <ResponseOverlay responses={responses} />
 

@@ -34,10 +34,10 @@ async def route_message(msg_type: str, payload: str, metadata: dict) -> dict | l
         return await handle_nav_frame(payload, metadata)
 
     if msg_type == "frame":
-        # Run safety and bio in parallel; add nav if a map is cached
+        # Run safety (and nav if map cached) in parallel
+        # Bio runs only on-demand via "identify" messages (Fish button)
         tasks = [
             handle_gauge_frame(payload, metadata),
-            handle_bio_frame(payload, metadata),
         ]
         if get_cached_map() is not None:
             tasks.append(handle_nav_frame(payload, metadata))
