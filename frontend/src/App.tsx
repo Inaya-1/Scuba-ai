@@ -50,7 +50,14 @@ export default function App() {
 
     scubaSocket.connect({
       onResponse: (res) => {
-        setResponses(prev => [res, ...prev].slice(0, 3));
+        setResponses(prev => {
+          // Nav responses replace the existing nav card instead of stacking
+          if (res.agent === 'nav') {
+            const withoutNav = prev.filter(r => r.agent !== 'nav');
+            return [res, ...withoutNav].slice(0, 3);
+          }
+          return [res, ...prev].slice(0, 3);
+        });
 
         // Capture nav map analysis metadata
         if (res.agent === 'nav' && res.metadata?.landmarks) {
