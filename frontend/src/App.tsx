@@ -7,6 +7,7 @@ import { HUD } from './components/HUD';
 import { ResponseOverlay } from './components/ResponseOverlay';
 import { MapUpload } from './components/MapUpload';
 import { RouteOverlay } from './components/RouteOverlay';
+import { HoloMap } from './components/HoloMap';
 import { DiveState, AgentResponse } from './types';
 import { scubaSocket } from './services/backendSocket';
 import { geminiLive } from './services/liveApi';
@@ -311,6 +312,20 @@ export default function App() {
               totalDistance={navDistance.total}
               stepDistance={navDistance.step}
               activeStepIndex={navDistance.stepIndex}
+            />
+          )}
+
+          {/* Holographic Map (visible when map analyzed and sheet closed) */}
+          {!showMap && mapAnalysis?.route_steps && mapAnalysis.route_steps.length > 0 && (
+            <HoloMap
+              routeSteps={mapAnalysis.route_steps}
+              landmarks={mapAnalysis.landmarks || []}
+              entryPoint={mapAnalysis.entry_point || ''}
+              exitPoint={mapAnalysis.exit_point || ''}
+              currentHeading={diveState.heading}
+              stepIndex={navDistance.stepIndex}
+              stepDistance={navDistance.step}
+              totalDistance={navDistance.total}
             />
           )}
 
