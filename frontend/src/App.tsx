@@ -17,6 +17,7 @@ const audioCapture = new AudioCapture();
 
 export default function App() {
   const [isStarted, setIsStarted] = useState(false);
+  const [accessCode, setAccessCode] = useState('');
   const [backendConnected, setBackendConnected] = useState(false);
   const [liveConnected, setLiveConnected] = useState(false);
   const [compassAvailable, setCompassAvailable] = useState(true);
@@ -132,13 +133,13 @@ export default function App() {
       },
       onConnect: () => setLiveConnected(true),
       onDisconnect: () => setLiveConnected(false),
-    });
+    }, accessCode);
 
     return () => {
       geminiLive.disconnect();
       setLiveConnected(false);
     };
-  }, [isStarted]);
+  }, [isStarted, accessCode]);
 
   // ── Simulate dive metrics (stop depth/air drift once real gauge data arrives) ──
   useEffect(() => {
@@ -273,7 +274,7 @@ export default function App() {
   return (
     <div className="relative w-full h-screen bg-black overflow-hidden select-none">
       <AnimatePresence>
-        {!isStarted && <LandingPage onStart={() => setIsStarted(true)} />}
+        {!isStarted && <LandingPage onStart={(code) => { setAccessCode(code); setIsStarted(true); }} />}
       </AnimatePresence>
 
       {isStarted && (

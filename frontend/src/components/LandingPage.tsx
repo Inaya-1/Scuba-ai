@@ -1,12 +1,42 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Waves, Shield, Navigation, Fish, Play } from 'lucide-react';
+import { Waves, Shield, Navigation, Fish, Play, Lock } from 'lucide-react';
 
 interface LandingPageProps {
-  onStart: () => void;
+  onStart: (code: string) => void;
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
+  const [code, setCode] = useState('');
+  const [error, setError] = useState('');
+  const [verifying, setVerifying] = useState(false);
+
+  const handleStart = async () => {
+    if (!code.trim()) {
+      setError('Enter access code');
+      return;
+    }
+    setVerifying(true);
+    setError('');
+    try {
+      const res = await fetch('/api/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: code.trim() }),
+      });
+      const data = await res.json();
+      if (data.valid) {
+        onStart(code.trim());
+      } else {
+        setError('Invalid access code');
+      }
+    } catch {
+      setError('Connection failed');
+    } finally {
+      setVerifying(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-dive-bg flex flex-col items-center justify-center p-6 text-center overflow-hidden">
       {/* Background Elements */}
@@ -52,16 +82,33 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
           />
         </div>
 
+        <div className="flex flex-col items-center gap-3 mb-4">
+          <div className="flex items-center gap-2 glass-panel px-4 py-2 rounded-xl">
+            <Lock className="w-4 h-4 text-dive-cyan/60" />
+            <input
+              type="password"
+              value={code}
+              onChange={(e) => { setCode(e.target.value); setError(''); }}
+              onKeyDown={(e) => e.key === 'Enter' && handleStart()}
+              placeholder="Access code"
+              className="bg-transparent text-white font-mono text-sm outline-none w-40 placeholder:text-white/20"
+              autoComplete="off"
+            />
+          </div>
+          {error && <span className="text-dive-red text-xs font-mono">{error}</span>}
+        </div>
+
         <motion.button
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
-          onClick={onStart}
-          className="group relative px-12 py-4 bg-dive-cyan text-dive-bg font-display font-bold text-xl rounded-2xl shadow-[0_0_30px_rgba(0,242,255,0.3)] overflow-hidden transition-all hover:shadow-[0_0_50px_rgba(0,242,255,0.5)]"
+          onClick={handleStart}
+          disabled={verifying}
+          className="group relative px-12 py-4 bg-dive-cyan text-dive-bg font-display font-bold text-xl rounded-2xl shadow-[0_0_30px_rgba(0,242,255,0.3)] overflow-hidden transition-all hover:shadow-[0_0_50px_rgba(0,242,255,0.5)] disabled:opacity-50"
         >
           <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500 skew-x-12" />
           <div className="flex items-center gap-2">
             <Play className="w-5 h-5 fill-current" />
-            INITIALIZE DIVE MODE
+            {verifying ? 'VERIFYING...' : 'INITIALIZE DIVE MODE'}
           </div>
         </motion.button>
 
