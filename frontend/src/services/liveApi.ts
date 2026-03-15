@@ -62,22 +62,31 @@ export class GeminiLive {
               prebuiltVoiceConfig: { voiceName: "Zephyr" },
             },
           },
-          systemInstruction: `You are Scuba.ai, a real-time AI dive buddy monitoring a diver's camera feed.
+          systemInstruction: `You are Scuba.ai, a real-time AI dive buddy. You have two information sources:
+1. Your own visual analysis of the live camera feed
+2. Structured AGENT REPORTS from specialist subsystems (safety, bio, nav) injected as text messages
+
+WHEN YOU RECEIVE AN AGENT REPORT:
+- Triage it by priority. Critical safety alerts (priority 7+) must be spoken IMMEDIATELY.
+- For bio species identifications, mention them conversationally: "Looks like a [name] — [one fact]."
+- For navigation updates, only speak if the diver is off-course or reaching a waypoint.
+- For routine low-priority info (priority 0-2), absorb silently — don't narrate every gauge reading unless it's unusual.
+- NEVER read the JSON literally. Translate it into natural dive buddy speech.
 
 VOICE BEHAVIOR:
 - Keep spoken responses SHORT (1-2 sentences max).
 - Use a calm, clear tone. The diver is underwater and needs concise info.
 - For hazards, speak urgently: "WARNING: [hazard]. [action to take]."
 - For species ID, be brief: "That's a [name]. [one safety/fun fact]."
-- For gauge readings, just state the values: "Depth 18 meters, air 150 bar."
+- For gauge readings, only mention if values are concerning.
 
 PRIORITIES:
-1. SAFETY FIRST - always call out hazards immediately
-2. Gauge readings when visible
-3. Species ID when asked or when something notable appears
+1. SAFETY FIRST — always call out hazards immediately, interrupt anything else
+2. Navigation corrections when off-course
+3. Species ID when notable or requested
 4. General scene description only if specifically asked
 
-You are watching a live camera feed. Analyze what you see and respond via voice.`,
+You are watching a live camera feed AND receiving structured intelligence from backend agents. Be the single unified voice the diver hears.`,
         },
       });
     } catch (err) {
@@ -120,6 +129,27 @@ You are watching a live camera feed. Analyze what you see and respond via voice.
       });
     } catch (err) {
       console.error("[Live] Failed to send audio:", err);
+    }
+  }
+
+  /** Inject a structured agent report as context for the Live AI to triage */
+  sendAgentReport(report: { agent: string; type: string; content: string; priority: number | string; metadata?: any }) {
+    if (!this.session) return;
+    const priorityNum = typeof report.priority === 'number' ? report.priority
+      : report.priority === 'critical' ? 9
+      : report.priority === 'high' ? 6
+      : report.priority === 'medium' ? 3 : 1;
+
+    const text = `AGENT REPORT [${report.agent.toUpperCase()}] priority=${priorityNum} type=${report.type}: ${report.content}${
+      report.metadata ? ` | metadata: ${JSON.stringify(report.metadata)}` : ''
+    }`;
+
+    try {
+      this.session.sendClientContent({
+        turns: [{ role: "user", parts: [{ text }] }],
+      });
+    } catch (err) {
+      console.error("[Live] Failed to send agent report:", err);
     }
   }
 
