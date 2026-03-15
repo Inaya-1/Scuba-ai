@@ -20,8 +20,22 @@ async def handle_identify(payload: str, metadata: dict) -> dict:
         result = await call_gemini(BIO_PROMPT, payload, user_text)
         output = AgentOutput(**result)
 
-        # Log the identification
-        if output.metadata:
+        # Low-confidence fallback
+        confidence = (output.metadata or {}).get("confidence", 1.0)
+        try:
+            confidence = float(confidence)
+        except (TypeError, ValueError):
+            confidence = 1.0
+
+        if confidence < 0.4:
+            output = AgentOutput(
+                agent="bio",
+                type="info",
+                content="I can't confidently identify this — try getting closer or a clearer angle.",
+                priority=1,
+                metadata={**(output.metadata or {}), "confidence": confidence},
+            )
+        elif output.metadata:
             _species_log.append(output.metadata)
 
         return output.model_dump()
@@ -44,6 +58,22 @@ async def handle_bio_frame(payload: str, metadata: dict) -> dict:
             "Scan this underwater scene. If you see any notable, dangerous, or interesting marine life, identify it. If nothing notable, respond with type 'info' and a brief scene note.",
         )
         output = AgentOutput(**result)
+
+        # Low-confidence: don't log or alert
+        confidence = (output.metadata or {}).get("confidence", 1.0)
+        try:
+            confidence = float(confidence)
+        except (TypeError, ValueError):
+            confidence = 1.0
+
+        if confidence < 0.4:
+            return AgentOutput(
+                agent="bio",
+                type="info",
+                content="Scanning...",
+                priority=0,
+                metadata={"confidence": confidence},
+            ).model_dump()
 
         if output.type == "species" and output.metadata:
             _species_log.append(output.metadata)
