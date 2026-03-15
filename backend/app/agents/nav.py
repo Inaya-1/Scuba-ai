@@ -7,11 +7,25 @@ logger = logging.getLogger(__name__)
 
 # In-memory cache of the last analyzed map (persists for the session)
 _cached_map: dict | None = None
+_current_step_index: int = 0
+
+
+def _heading_diff(current: float, target: float) -> float:
+    """Signed heading difference: positive = turn right, negative = turn left."""
+    diff = (target - current + 540) % 360 - 180
+    return diff
+
+
+def _get_turn_direction(diff: float) -> str:
+    if diff > 0:
+        return "right"
+    return "left"
 
 
 async def handle_map_upload(payload: str, metadata: dict) -> dict:
     """Analyze a hand-drawn dive site map and cache the landmarks."""
-    global _cached_map
+    global _cached_map, _current_step_index
+    _current_step_index = 0
     try:
         result = await call_gemini(
             NAV_PROMPT,
@@ -33,6 +47,8 @@ async def handle_map_upload(payload: str, metadata: dict) -> dict:
 
 async def handle_nav_frame(payload: str, metadata: dict) -> dict:
     """Analyze a live frame for navigation context using the cached map."""
+    global _current_step_index
+
     if _cached_map is None:
         return AgentOutput(
             agent="nav",
@@ -42,12 +58,36 @@ async def handle_nav_frame(payload: str, metadata: dict) -> dict:
         ).model_dump()
 
     try:
+        heading = metadata.get("heading")
+        route_steps = _cached_map.get("route_steps", [])
+
+        # Heading correlation: check if diver is off-course
+        course_guidance = ""
+        priority = 5
+        if heading is not None and route_steps and _current_step_index < len(route_steps):
+            target_heading = route_steps[_current_step_index].get("heading", 0)
+            diff = _heading_diff(heading, target_heading)
+
+            if abs(diff) > 30:
+                direction = _get_turn_direction(diff)
+                course_guidance = f" You are off-course by {abs(int(diff))}°. Turn {direction} toward heading {target_heading}°."
+                priority = 7
+            elif abs(diff) <= 15 and _current_step_index < len(route_steps) - 1:
+                # Close enough to target — advance to next step
+                _current_step_index += 1
+
         context = f"The diver previously uploaded a map with these landmarks: {_cached_map}. "
-        context += f"Current compass heading: {metadata.get('heading', 'unknown')}°. "
+        context += f"Current compass heading: {heading if heading is not None else 'unknown'}°. "
+        context += f"Current route step: {_current_step_index + 1} of {len(route_steps)}. "
+        if course_guidance:
+            context += f"IMPORTANT:{course_guidance} "
         context += "Based on what you see in this live frame, provide navigation guidance."
 
         result = await call_gemini(NAV_PROMPT, payload, context)
         output = AgentOutput(**result)
+        # Override priority if off-course
+        if priority > output.priority:
+            output.priority = priority
         return output.model_dump()
     except Exception as e:
         logger.error(f"NavAgent frame error: {e}")

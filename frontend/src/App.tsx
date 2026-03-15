@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { AnimatePresence } from 'motion/react';
-import { Mic, Map as MapIcon, Settings, Info, X, Navigation } from 'lucide-react';
+import { Mic, Map as MapIcon, Settings, Info } from 'lucide-react';
 import { LandingPage } from './components/LandingPage';
 import { CameraFeed } from './components/CameraFeed';
 import { HUD } from './components/HUD';
 import { ResponseOverlay } from './components/ResponseOverlay';
+import { MapUpload } from './components/MapUpload';
+import { RouteOverlay } from './components/RouteOverlay';
 import { DiveState, AgentResponse } from './types';
 import { scubaSocket } from './services/backendSocket';
 import { geminiLive } from './services/liveApi';
@@ -27,7 +29,16 @@ export default function App() {
   });
   const [responses, setResponses] = useState<AgentResponse[]>([]);
   const [showMap, setShowMap] = useState(false);
+  const [mapAnalysis, setMapAnalysis] = useState<{
+    landmarks: string[];
+    entry_point: string;
+    exit_point: string;
+    suggested_heading: number;
+    confidence?: number;
+    route_steps: { heading: number; description: string; distance_m?: number }[];
+  } | null>(null);
   const isListeningRef = useRef(false);
+  const headingRef = useRef(245);
   // Once the backend sends real gauge data, stop overwriting with simulation
   const hasRealGaugeData = useRef(false);
 
@@ -38,6 +49,11 @@ export default function App() {
     scubaSocket.connect({
       onResponse: (res) => {
         setResponses(prev => [res, ...prev].slice(0, 3));
+
+        // Capture nav map analysis metadata
+        if (res.agent === 'nav' && res.metadata?.landmarks) {
+          setMapAnalysis(res.metadata as typeof mapAnalysis);
+        }
 
         if (res.metadata) {
           const m = res.metadata!;
@@ -107,11 +123,34 @@ export default function App() {
         ...(hasRealGaugeData.current ? {} : {
           depth: Math.max(0, prev.depth + (Math.random() - 0.5) * 0.1),
         }),
-        heading: (prev.heading + Math.floor((Math.random() - 0.5) * 2) + 360) % 360,
       }));
     }, 1000);
 
     return () => clearInterval(interval);
+  }, [isStarted]);
+
+  // ── Device compass heading ──
+  useEffect(() => {
+    if (!isStarted) return;
+
+    const handleOrientation = (e: DeviceOrientationEvent) => {
+      const heading = (e as any).webkitCompassHeading ?? e.alpha ?? 0;
+      const rounded = Math.round(heading);
+      headingRef.current = rounded;
+      setDiveState(prev => ({ ...prev, heading: rounded }));
+    };
+
+    if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
+      (DeviceOrientationEvent as any).requestPermission().then((state: string) => {
+        if (state === 'granted') {
+          window.addEventListener('deviceorientation', handleOrientation);
+        }
+      });
+    } else {
+      window.addEventListener('deviceorientation', handleOrientation);
+    }
+
+    return () => window.removeEventListener('deviceorientation', handleOrientation);
   }, [isStarted]);
 
   // ── Frame handler: send to both backend (slow/structured) and Live API (fast/realtime) ──
@@ -124,7 +163,7 @@ export default function App() {
 
     // Every 3rd frame (6s) goes to backend for structured JSON analysis
     if (frameCountRef.current % 3 === 0) {
-      scubaSocket.sendFrame(base64);
+      scubaSocket.sendFrame(base64, headingRef.current);
     }
   }, []);
 
@@ -203,34 +242,24 @@ export default function App() {
             </button>
           </div>
 
-          {/* Map Overlay */}
+          {/* Map Upload Bottom Sheet */}
           <AnimatePresence>
             {showMap && (
-              <div className="fixed inset-0 z-40 flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm">
-                <div className="relative glass-panel w-full max-w-4xl aspect-video p-2 border-dive-cyan/20">
-                  <button
-                    onClick={() => setShowMap(false)}
-                    className="absolute top-4 right-4 p-2 glass-panel text-white/60 hover:text-white z-10"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                  <img
-                    src="https://picsum.photos/seed/divemap/1200/800"
-                    alt="Dive Map"
-                    className="w-full h-full object-cover rounded-xl opacity-80"
-                    referrerPolicy="no-referrer"
-                  />
-                  <div className="absolute bottom-8 left-8 glass-panel p-4">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Navigation className="w-4 h-4 text-dive-cyan" />
-                      <span className="hud-text">Current Location</span>
-                    </div>
-                    <p className="font-display font-bold">REEF COVE - SECTOR 4</p>
-                  </div>
-                </div>
-              </div>
+              <MapUpload
+                onUpload={(base64) => scubaSocket.sendMap(base64)}
+                onClose={() => setShowMap(false)}
+                analysis={mapAnalysis}
+              />
             )}
           </AnimatePresence>
+
+          {/* Route Overlay (visible when map analyzed and sheet closed) */}
+          {!showMap && mapAnalysis?.route_steps && mapAnalysis.route_steps.length > 0 && (
+            <RouteOverlay
+              routeSteps={mapAnalysis.route_steps}
+              currentHeading={diveState.heading}
+            />
+          )}
 
           {/* Status Indicators */}
           <div className="absolute top-6 left-1/2 -translate-x-1/2 flex items-center gap-4">
