@@ -40,6 +40,7 @@ export default function App() {
   } | null>(null);
   const [mapError, setMapError] = useState<string | null>(null);
   const [navDistance, setNavDistance] = useState<{ total: number; step: number; stepIndex: number }>({ total: 0, step: 0, stepIndex: 0 });
+  const mapLockedRef = useRef(false);
   const isListeningRef = useRef(false);
   const headingRef = useRef(245);
   // Once the backend sends real gauge data, stop overwriting with simulation
@@ -60,10 +61,11 @@ export default function App() {
           return [res, ...prev].slice(0, 3);
         });
 
-        // Capture nav map analysis metadata
-        if (res.agent === 'nav' && res.metadata?.landmarks) {
+        // Capture nav map analysis metadata — only on first response with route_steps (from map upload)
+        if (res.agent === 'nav' && res.metadata?.route_steps && !mapLockedRef.current) {
           setMapAnalysis(res.metadata as typeof mapAnalysis);
           setMapError(null);
+          mapLockedRef.current = true;
         }
         // Capture nav distance data from visual odometry
         if (res.agent === 'nav' && res.metadata?.total_distance_m != null) {
@@ -226,6 +228,7 @@ export default function App() {
     setShowMap(false);
     setMapAnalysis(null);
     setMapError(null);
+    mapLockedRef.current = false;
     setNavDistance({ total: 0, step: 0, stepIndex: 0 });
     setDiveState({
       depth: 12.4, airPressure: 185, bottomTime: 0,
@@ -296,7 +299,7 @@ export default function App() {
           <AnimatePresence>
             {showMap && (
               <MapUpload
-                onUpload={(base64) => { setMapError(null); scubaSocket.sendMap(base64); }}
+                onUpload={(base64) => { setMapError(null); setMapAnalysis(null); mapLockedRef.current = false; scubaSocket.sendMap(base64); }}
                 onClose={() => setShowMap(false)}
                 analysis={mapAnalysis}
                 error={mapError}
