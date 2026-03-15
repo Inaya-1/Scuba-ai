@@ -170,14 +170,24 @@ You are watching a live camera feed AND receiving structured intelligence from b
     } catch {}
     this.session = null;
     this.ai = null;
+    this.nextPlayTime = 0;
+    this.audioContext?.close().catch(() => {});
+    this.audioContext = null;
   }
 
   // -- Audio playback for voice responses --
+  private nextPlayTime = 0;
+
   async playAudioChunk(base64Pcm: string) {
     if (!this.audioContext) {
       this.audioContext = new AudioContext({ sampleRate: 24000 });
     }
     const ctx = this.audioContext;
+
+    // Resume if suspended (browser autoplay policy)
+    if (ctx.state === 'suspended') {
+      await ctx.resume();
+    }
 
     const raw = atob(base64Pcm);
     const bytes = new Uint8Array(raw.length);
@@ -196,7 +206,11 @@ You are watching a live camera feed AND receiving structured intelligence from b
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     source.connect(ctx.destination);
-    source.start();
+
+    // Queue chunks sequentially to avoid overlap
+    const startTime = Math.max(ctx.currentTime, this.nextPlayTime);
+    source.start(startTime);
+    this.nextPlayTime = startTime + buffer.duration;
   }
 }
 

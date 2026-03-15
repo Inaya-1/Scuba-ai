@@ -57,6 +57,13 @@ export default function App() {
   // Keep ref in sync with state for use inside WS callback closure
   useEffect(() => { showAgentCardsRef.current = showAgentCards; }, [showAgentCards]);
 
+  // Clear agent cards when toggle is turned off
+  useEffect(() => {
+    if (!showAgentCards) {
+      setResponses(prev => prev.filter(r => r.agent === 'safety' && (r.priority === 'critical' || r.priority === 'high')));
+    }
+  }, [showAgentCards]);
+
   // ── Backend WebSocket: structured analysis + map uploads ──
   useEffect(() => {
     if (!isStarted) return;
@@ -155,6 +162,7 @@ export default function App() {
           type: 'info',
           content: text,
           priority: 'medium',
+          _ts: Date.now(),
         }, ...prev].slice(0, 3));
       },
       onAudioData: (pcmBase64) => {
@@ -173,14 +181,18 @@ export default function App() {
     };
   }, [isStarted, accessCode]);
 
-  // ── Auto-dismiss response cards after 8 seconds ──
+  // ── Auto-dismiss response cards after 6 seconds ──
   useEffect(() => {
     if (responses.length === 0) return;
-    const timer = setTimeout(() => {
-      setResponses(prev => prev.slice(0, -1));
-    }, 8000);
-    return () => clearTimeout(timer);
-  }, [responses]);
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setResponses(prev => prev.filter(r => {
+        const age = now - (r._ts ?? now);
+        return age < 6000;
+      }));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [responses.length > 0]);
 
   // ── Simulate dive metrics (stop depth/air drift once real gauge data arrives) ──
   useEffect(() => {
@@ -287,6 +299,7 @@ export default function App() {
       type: 'info',
       content: 'Identifying species...',
       priority: 'low',
+      _ts: Date.now(),
     }, ...prev].slice(0, 3));
 
     scubaSocket.sendIdentify(freshFrame, "What is this?");
