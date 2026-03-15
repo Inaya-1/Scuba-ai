@@ -38,6 +38,7 @@ export default function App() {
     route_steps: { heading: number; description: string; distance_m?: number }[];
   } | null>(null);
   const [mapError, setMapError] = useState<string | null>(null);
+  const [navDistance, setNavDistance] = useState<{ total: number; step: number; stepIndex: number }>({ total: 0, step: 0, stepIndex: 0 });
   const isListeningRef = useRef(false);
   const headingRef = useRef(245);
   // Once the backend sends real gauge data, stop overwriting with simulation
@@ -55,6 +56,14 @@ export default function App() {
         if (res.agent === 'nav' && res.metadata?.landmarks) {
           setMapAnalysis(res.metadata as typeof mapAnalysis);
           setMapError(null);
+        }
+        // Capture nav distance data from visual odometry
+        if (res.agent === 'nav' && res.metadata?.total_distance_m != null) {
+          setNavDistance({
+            total: res.metadata.total_distance_m,
+            step: res.metadata.step_distance_m ?? 0,
+            stepIndex: res.metadata.current_step_index ?? 0,
+          });
         }
         // Capture nav errors
         if (res.agent === 'nav' && res.content && !res.metadata?.landmarks) {
@@ -267,6 +276,9 @@ export default function App() {
             <RouteOverlay
               routeSteps={mapAnalysis.route_steps}
               currentHeading={diveState.heading}
+              totalDistance={navDistance.total}
+              stepDistance={navDistance.step}
+              activeStepIndex={navDistance.stepIndex}
             />
           )}
 

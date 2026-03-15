@@ -1,4 +1,5 @@
 import logging
+import time
 from app.agents.base import call_gemini
 from app.prompts.nav import NAV_PROMPT
 from app.models.messages import AgentOutput
@@ -8,6 +9,12 @@ logger = logging.getLogger(__name__)
 # In-memory cache of the last analyzed map (persists for the session)
 _cached_map: dict | None = None
 _current_step_index: int = 0
+
+# Visual odometry state
+_total_distance_m: float = 0.0
+_step_distance_m: float = 0.0
+_last_frame_time: float | None = None
+_prev_landmarks_seen: list[str] = []
 
 
 def _heading_diff(current: float, target: float) -> float:
@@ -24,8 +31,12 @@ def _get_turn_direction(diff: float) -> str:
 
 async def handle_map_upload(payload: str, metadata: dict) -> dict:
     """Analyze a hand-drawn dive site map and cache the landmarks."""
-    global _cached_map, _current_step_index
+    global _cached_map, _current_step_index, _total_distance_m, _step_distance_m, _last_frame_time, _prev_landmarks_seen
     _current_step_index = 0
+    _total_distance_m = 0.0
+    _step_distance_m = 0.0
+    _last_frame_time = None
+    _prev_landmarks_seen = []
     try:
         result = await call_gemini(
             NAV_PROMPT,
@@ -47,7 +58,7 @@ async def handle_map_upload(payload: str, metadata: dict) -> dict:
 
 async def handle_nav_frame(payload: str, metadata: dict) -> dict:
     """Analyze a live frame for navigation context using the cached map."""
-    global _current_step_index
+    global _current_step_index, _total_distance_m, _step_distance_m, _last_frame_time, _prev_landmarks_seen
 
     if _cached_map is None:
         return AgentOutput(
@@ -60,6 +71,7 @@ async def handle_nav_frame(payload: str, metadata: dict) -> dict:
     try:
         heading = metadata.get("heading")
         route_steps = _cached_map.get("route_steps", [])
+        now = time.time()
 
         # Heading correlation: check if diver is off-course
         course_guidance = ""
@@ -73,19 +85,45 @@ async def handle_nav_frame(payload: str, metadata: dict) -> dict:
                 course_guidance = f" You are off-course by {abs(int(diff))}°. Turn {direction} toward heading {target_heading}°."
                 priority = 7
             elif abs(diff) <= 15 and _current_step_index < len(route_steps) - 1:
-                # Close enough to target — advance to next step
                 _current_step_index += 1
+                _step_distance_m = 0.0
 
+        # Build context with odometry request
         context = f"The diver previously uploaded a map with these landmarks: {_cached_map}. "
         context += f"Current compass heading: {heading if heading is not None else 'unknown'}°. "
         context += f"Current route step: {_current_step_index + 1} of {len(route_steps)}. "
+        context += f"Previously visible landmarks: {_prev_landmarks_seen if _prev_landmarks_seen else 'none yet'}. "
+        context += f"Distance traveled so far: {_total_distance_m:.1f}m total, {_step_distance_m:.1f}m on current step. "
         if course_guidance:
             context += f"IMPORTANT:{course_guidance} "
-        context += "Based on what you see in this live frame, provide navigation guidance."
+        context += "Based on what you see in this live frame, provide navigation guidance and estimate distance traveled since last frame."
 
         result = await call_gemini(NAV_PROMPT, payload, context)
         output = AgentOutput(**result)
-        # Override priority if off-course
+
+        # Extract visual odometry estimate from Gemini response
+        odom = output.metadata.get("distance_estimate_m", 0) if output.metadata else 0
+        try:
+            odom = float(odom)
+        except (TypeError, ValueError):
+            odom = 0.0
+        # Clamp to reasonable range (0-10m per 6s frame interval ≈ max ~1.7m/s swim speed)
+        odom = max(0.0, min(odom, 10.0))
+
+        _total_distance_m += odom
+        _step_distance_m += odom
+
+        # Track which landmarks Gemini sees for continuity
+        if output.metadata and output.metadata.get("visible_landmarks"):
+            _prev_landmarks_seen = output.metadata["visible_landmarks"]
+
+        # Inject odometry data into output metadata
+        if output.metadata is None:
+            output.metadata = {}
+        output.metadata["total_distance_m"] = round(_total_distance_m, 1)
+        output.metadata["step_distance_m"] = round(_step_distance_m, 1)
+        output.metadata["current_step_index"] = _current_step_index
+
         if priority > output.priority:
             output.priority = priority
         return output.model_dump()
