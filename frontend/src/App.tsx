@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { AnimatePresence } from 'motion/react';
 import { Mic, Map as MapIcon, Settings, Info, X, Navigation, Fish, Upload } from 'lucide-react';
 import { LandingPage } from './components/LandingPage';
-import { CameraFeed } from './components/CameraFeed';
+import { CameraFeed, CameraFeedHandle } from './components/CameraFeed';
 import { HUD } from './components/HUD';
 import { ResponseOverlay } from './components/ResponseOverlay';
 import { DiveState, AgentResponse } from './types';
@@ -30,6 +30,7 @@ export default function App() {
   const [demoVideo, setDemoVideo] = useState<string | null>(null);
   const isListeningRef = useRef(false);
   const demoInputRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<CameraFeedHandle>(null);
 
   // ── Backend WebSocket: structured analysis + map uploads ──
   useEffect(() => {
@@ -37,7 +38,13 @@ export default function App() {
 
     scubaSocket.connect({
       onResponse: (res) => {
-        setResponses(prev => [res, ...prev].slice(0, 3));
+        setResponses(prev => {
+          // Replace any "Identifying species..." loading cards when a real bio response arrives
+          const filtered = res.agent === 'bio'
+            ? prev.filter(r => !(r.agent === 'bio' && r.content === 'Identifying species...'))
+            : prev;
+          return [res, ...filtered].slice(0, 3);
+        });
 
         if (res.metadata) {
           setDiveState(prev => ({
@@ -113,7 +120,9 @@ export default function App() {
 
   // ── Marine ID: "What is this?" trigger ──
   const handleIdentify = useCallback(() => {
-    if (!latestFrameRef.current) return;
+    // Capture a fresh frame right now instead of using the cached one (up to 2s stale)
+    const freshFrame = cameraRef.current?.captureFrame() || latestFrameRef.current;
+    if (!freshFrame) return;
 
     // Immediate loading feedback
     setResponses(prev => [{
@@ -124,7 +133,7 @@ export default function App() {
     }, ...prev].slice(0, 3));
 
     // Use backend (gemini-2.5-flash with thinking disabled) — reliable quota
-    scubaSocket.sendIdentify(latestFrameRef.current, "What is this?");
+    scubaSocket.sendIdentify(freshFrame, "What is this?");
   }, []);
 
   // ── Push-to-talk: capture mic audio and stream to Live API ──
@@ -158,7 +167,7 @@ export default function App() {
 
       {isStarted && (
         <>
-          <CameraFeed onFrame={handleFrame} onTap={handleIdentify} isStreaming={isStarted} demoVideoUrl={demoVideo} />
+          <CameraFeed ref={cameraRef} onFrame={handleFrame} onTap={handleIdentify} isStreaming={isStarted} demoVideoUrl={demoVideo} />
           <HUD state={diveState} />
           <ResponseOverlay responses={responses} />
 
