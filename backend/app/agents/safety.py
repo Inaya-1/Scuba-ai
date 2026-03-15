@@ -1,4 +1,5 @@
 import logging
+import time
 from app.agents.base import call_gemini
 from app.prompts.safety import SAFETY_PROMPT
 from app.models.messages import AgentOutput
@@ -7,6 +8,9 @@ logger = logging.getLogger(__name__)
 
 # Track the latest known gauge readings for trend detection
 _last_reading: dict | None = None
+# Sliding window of (depth_m, timestamp) for ascent/descent rate smoothing
+_depth_history: list[tuple[float, float]] = []
+_MAX_DEPTH_HISTORY = 4
 
 
 async def handle_gauge_frame(payload: str, metadata: dict) -> dict:
@@ -69,25 +73,44 @@ def _check_thresholds(output: AgentOutput) -> AgentOutput:
     cns_percent = m.get("cns_percent")
     po2 = m.get("po2")
 
-    # ── Ascent / Descent Rate (compare with previous reading) ──
+    # ── Ascent / Descent Rate (smoothed over multiple readings) ──
     depth = depth_m if depth_m is not None else (depth_ft * 0.3048 if depth_ft else None)
-    if _last_reading and depth is not None:
-        prev_depth = _last_reading.get("depth_m")
-        if prev_depth is None and _last_reading.get("depth_ft") is not None:
-            prev_depth = _last_reading["depth_ft"] * 0.3048
-        if prev_depth is not None:
-            # Frames arrive ~6s apart
-            ascent_rate = (prev_depth - depth) / 6.0 * 60  # m/min (positive = ascending)
-            descent_rate = -ascent_rate  # positive = descending
-            m["ascent_rate_mpm"] = round(ascent_rate, 1)
+    if depth is not None:
+        now = time.time()
+        _depth_history.append((depth, now))
+        # Keep only the last N readings
+        while len(_depth_history) > _MAX_DEPTH_HISTORY:
+            _depth_history.pop(0)
 
-            if ascent_rate > 18:  # Max safe ascent: 18 m/min (PADI)
-                alerts.append(f"CRITICAL: Ascending too fast ({ascent_rate:.0f} m/min). Slow down immediately!")
-            elif ascent_rate > 10:
-                alerts.append(f"Ascent rate elevated ({ascent_rate:.0f} m/min). Slow your ascent.")
+        if len(_depth_history) >= 3:
+            # Average rate across consecutive pairs for smoothing
+            rates = []
+            for i in range(1, len(_depth_history)):
+                d_prev, t_prev = _depth_history[i - 1]
+                d_curr, t_curr = _depth_history[i]
+                dt = t_curr - t_prev
+                if dt > 0:
+                    rates.append((d_prev - d_curr) / dt * 60)  # m/min, positive = ascending
+            if rates:
+                ascent_rate = sum(rates) / len(rates)
+                descent_rate = -ascent_rate
+                m["ascent_rate_mpm"] = round(ascent_rate, 1)
 
-            if descent_rate > 30:  # Rapid descent risk — barotrauma danger
-                alerts.append(f"CRITICAL: Descending too fast ({descent_rate:.0f} m/min). Equalize and slow down!")
+                if ascent_rate > 18:
+                    alerts.append(f"CRITICAL: Ascending too fast ({ascent_rate:.0f} m/min). Slow down immediately!")
+                elif ascent_rate > 10:
+                    alerts.append(f"Ascent rate elevated ({ascent_rate:.0f} m/min). Slow your ascent.")
+
+                if descent_rate > 30:
+                    alerts.append(f"CRITICAL: Descending too fast ({descent_rate:.0f} m/min). Equalize and slow down!")
+        elif len(_depth_history) == 2:
+            # Only 2 readings: calculate but don't trigger CRITICAL alerts (not enough data)
+            d_prev, t_prev = _depth_history[0]
+            d_curr, t_curr = _depth_history[1]
+            dt = t_curr - t_prev
+            if dt > 0:
+                ascent_rate = (d_prev - d_curr) / dt * 60
+                m["ascent_rate_mpm"] = round(ascent_rate, 1)
 
     # ── Air Pressure Checks ──
     pressure_bar = bar if bar is not None else (psi / 14.504 if psi else None)
