@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { AnimatePresence } from 'motion/react';
-import { Mic, Map as MapIcon, Settings, Info } from 'lucide-react';
+import { Mic, Map as MapIcon, Power, Info } from 'lucide-react';
 import { LandingPage } from './components/LandingPage';
 import { CameraFeed } from './components/CameraFeed';
 import { HUD } from './components/HUD';
@@ -214,6 +214,27 @@ export default function App() {
     audioCapture.stop();
   }, []);
 
+  const endDive = useCallback(() => {
+    audioCapture.stop();
+    scubaSocket.disconnect();
+    geminiLive.disconnect();
+    setIsStarted(false);
+    setBackendConnected(false);
+    setLiveConnected(false);
+    setResponses([]);
+    setShowMap(false);
+    setMapAnalysis(null);
+    setMapError(null);
+    setNavDistance({ total: 0, step: 0, stepIndex: 0 });
+    setDiveState({
+      depth: 12.4, airPressure: 185, bottomTime: 0,
+      heading: 245, waterTemp: 24, isRecording: false, isListening: false,
+    });
+    frameCountRef.current = 0;
+    headingRef.current = 245;
+    hasRealGaugeData.current = false;
+  }, []);
+
   return (
     <div className="relative w-full h-screen bg-black overflow-hidden select-none">
       <AnimatePresence>
@@ -261,8 +282,12 @@ export default function App() {
               <Mic className={`w-8 h-8 ${diveState.isListening ? 'animate-pulse' : ''}`} />
             </button>
 
-            <button className="p-4 rounded-full glass-panel text-white/60 active:scale-90">
-              <Settings className="w-6 h-6" />
+            <button
+              onClick={endDive}
+              className="p-4 rounded-full glass-panel text-dive-red/80 active:scale-90 hover:bg-dive-red/10 transition-all"
+              title="End Dive"
+            >
+              <Power className="w-6 h-6" />
             </button>
           </div>
 
