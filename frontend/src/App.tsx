@@ -37,6 +37,7 @@ export default function App() {
     confidence?: number;
     route_steps: { heading: number; description: string; distance_m?: number }[];
   } | null>(null);
+  const [mapError, setMapError] = useState<string | null>(null);
   const isListeningRef = useRef(false);
   const headingRef = useRef(245);
   // Once the backend sends real gauge data, stop overwriting with simulation
@@ -53,6 +54,13 @@ export default function App() {
         // Capture nav map analysis metadata
         if (res.agent === 'nav' && res.metadata?.landmarks) {
           setMapAnalysis(res.metadata as typeof mapAnalysis);
+          setMapError(null);
+        }
+        // Capture nav errors
+        if (res.agent === 'nav' && res.content && !res.metadata?.landmarks) {
+          if (res.content.toLowerCase().includes('could not') || res.content.toLowerCase().includes('unavailable') || res.content.toLowerCase().includes('error')) {
+            setMapError(res.content);
+          }
         }
 
         if (res.metadata) {
@@ -246,9 +254,10 @@ export default function App() {
           <AnimatePresence>
             {showMap && (
               <MapUpload
-                onUpload={(base64) => scubaSocket.sendMap(base64)}
+                onUpload={(base64) => { setMapError(null); scubaSocket.sendMap(base64); }}
                 onClose={() => setShowMap(false)}
                 analysis={mapAnalysis}
+                error={mapError}
               />
             )}
           </AnimatePresence>

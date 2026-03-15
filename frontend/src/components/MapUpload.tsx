@@ -1,6 +1,6 @@
-import { useState, useRef, ChangeEvent } from 'react';
+import { useState, useRef, useEffect, ChangeEvent } from 'react';
 import { motion } from 'motion/react';
-import { Camera, Upload, X, Loader2, MapPin, Navigation, CheckCircle } from 'lucide-react';
+import { Camera, Upload, X, Loader2, MapPin, Navigation, CheckCircle, AlertTriangle } from 'lucide-react';
 
 interface RouteStep {
   heading: number;
@@ -21,13 +21,35 @@ interface MapUploadProps {
   onUpload: (base64: string) => void;
   onClose: () => void;
   analysis: MapAnalysis | null;
+  error: string | null;
 }
 
-export function MapUpload({ onUpload, onClose, analysis }: MapUploadProps) {
+const LOADING_STEPS = [
+  { label: 'Uploading image...', delay: 0 },
+  { label: 'Sending to Gemini Vision...', delay: 1500 },
+  { label: 'Extracting landmarks...', delay: 4000 },
+  { label: 'Building route...', delay: 7000 },
+];
+
+export function MapUpload({ onUpload, onClose, analysis, error }: MapUploadProps) {
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingStep, setLoadingStep] = useState(0);
   const [preview, setPreview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const captureInputRef = useRef<HTMLInputElement>(null);
+
+  // Animate through loading steps
+  useEffect(() => {
+    if (!isLoading) { setLoadingStep(0); return; }
+    const timers = LOADING_STEPS.slice(1).map((step, i) =>
+      setTimeout(() => setLoadingStep(i + 1), step.delay)
+    );
+    // Timeout after 30s
+    const timeout = setTimeout(() => {
+      setIsLoading(false);
+    }, 30000);
+    return () => { timers.forEach(clearTimeout); clearTimeout(timeout); };
+  }, [isLoading]);
 
   const handleFile = (file: File) => {
     const reader = new FileReader();
@@ -36,7 +58,6 @@ export function MapUpload({ onUpload, onClose, analysis }: MapUploadProps) {
       setPreview(reader.result as string);
       setIsLoading(true);
       onUpload(base64);
-      // Loading state will clear when analysis arrives via props
     };
     reader.readAsDataURL(file);
   };
@@ -46,8 +67,8 @@ export function MapUpload({ onUpload, onClose, analysis }: MapUploadProps) {
     if (file) handleFile(file);
   };
 
-  // Clear loading when analysis arrives
-  if (isLoading && analysis) {
+  // Clear loading when analysis or error arrives
+  if (isLoading && (analysis || error)) {
     setIsLoading(false);
   }
 
@@ -118,11 +139,36 @@ export function MapUpload({ onUpload, onClose, analysis }: MapUploadProps) {
             <div className="relative rounded-xl overflow-hidden">
               <img src={preview} alt="Dive map" className="w-full h-48 object-cover" />
               {isLoading && (
-                <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center gap-3">
+                <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center gap-3 p-4">
                   <Loader2 className="w-8 h-8 text-dive-cyan animate-spin" />
-                  <span className="hud-text">Analyzing map...</span>
+                  <div className="space-y-1.5 w-full max-w-[200px]">
+                    {LOADING_STEPS.map((step, i) => (
+                      <div key={i} className={`flex items-center gap-2 transition-opacity duration-300 ${i <= loadingStep ? 'opacity-100' : 'opacity-30'}`}>
+                        <div className={`w-1.5 h-1.5 rounded-full ${i < loadingStep ? 'bg-green-400' : i === loadingStep ? 'bg-dive-cyan animate-pulse' : 'bg-white/20'}`} />
+                        <span className="hud-text text-[9px]">{step.label}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Error state */}
+        {error && !isLoading && (
+          <div className="mb-5 glass-panel border-dive-red/30 p-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-dive-red flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm text-white/80">{error}</p>
+                <button
+                  onClick={() => setPreview(null)}
+                  className="mt-2 text-xs text-dive-cyan hover:underline"
+                >
+                  Try again
+                </button>
+              </div>
             </div>
           </div>
         )}
