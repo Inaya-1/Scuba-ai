@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Maximize2, Minimize2 } from 'lucide-react';
 
@@ -19,56 +19,64 @@ interface HoloMapProps {
   totalDistance: number;
 }
 
-// Convert heading (0°=N, 90°=E, 180°=S, 270°=W) to SVG angle
-function headingToAngle(heading: number): number {
-  // SVG: 0° = right, counter-clockwise positive
-  // Compass: 0° = up (north), clockwise positive
-  // Convert: SVG angle = 90 - heading (in radians)
-  return ((90 - heading) * Math.PI) / 180;
+const SIZE = 200;
+const PAD = 28;
+
+// Heading to math angle: 0°N = up, 90°E = right
+function headingToXY(heading: number, dist: number): { dx: number; dy: number } {
+  const rad = ((heading - 90) * Math.PI) / 180;
+  return {
+    dx: dist * Math.cos(rad) * -1, // east is +x
+    dy: dist * Math.sin(rad) * -1, // north is -y in SVG
+  };
+  // Simpler: heading 0 (N) → dy=-dist, heading 90 (E) → dx=+dist
 }
 
-function computeRoutePoints(steps: RouteStep[]): { x: number; y: number }[] {
-  const points: { x: number; y: number }[] = [{ x: 0, y: 0 }];
+function buildRoute(steps: RouteStep[]): { x: number; y: number }[] {
+  const pts: { x: number; y: number }[] = [{ x: 0, y: 0 }];
   for (const step of steps) {
-    const prev = points[points.length - 1];
-    const dist = step.distance_m || 20;
-    const angle = headingToAngle(step.heading);
-    points.push({
-      x: prev.x + dist * Math.cos(angle),
-      y: prev.y - dist * Math.sin(angle), // SVG y is inverted
+    const prev = pts[pts.length - 1];
+    const dist = step.distance_m && step.distance_m > 0 ? step.distance_m : 25;
+    // Compass heading: 0=N(up), 90=E(right), 180=S(down), 270=W(left)
+    const rad = (step.heading * Math.PI) / 180;
+    pts.push({
+      x: prev.x + dist * Math.sin(rad),  // sin for E/W component
+      y: prev.y - dist * Math.cos(rad),  // -cos for N/S (SVG y inverted)
     });
   }
-  return points;
+  return pts;
 }
 
-function normalizePoints(
-  points: { x: number; y: number }[],
-  width: number,
-  height: number,
-  padding: number
-): { x: number; y: number }[] {
-  if (points.length === 0) return [];
+function fitToViewport(pts: { x: number; y: number }[]): { x: number; y: number }[] {
+  if (pts.length < 2) return [{ x: SIZE / 2, y: SIZE / 2 }];
 
-  const xs = points.map((p) => p.x);
-  const ys = points.map((p) => p.y);
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const p of pts) {
+    minX = Math.min(minX, p.x);
+    maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y);
+    maxY = Math.max(maxY, p.y);
+  }
 
-  const rangeX = maxX - minX || 1;
-  const rangeY = maxY - minY || 1;
-  const scale = Math.min(
-    (width - padding * 2) / rangeX,
-    (height - padding * 2) / rangeY
-  );
+  let rangeX = maxX - minX;
+  let rangeY = maxY - minY;
 
-  const offsetX = (width - rangeX * scale) / 2;
-  const offsetY = (height - rangeY * scale) / 2;
+  // Prevent collapse: ensure minimum range on both axes
+  if (rangeX < 1) { rangeX = 100; minX -= 50; }
+  if (rangeY < 1) { rangeY = 100; minY -= 50; }
 
-  return points.map((p) => ({
-    x: (p.x - minX) * scale + offsetX,
-    y: (p.y - minY) * scale + offsetY,
+  const usable = SIZE - PAD * 2;
+  const scale = Math.min(usable / rangeX, usable / rangeY);
+
+  // Center in viewport
+  const scaledW = rangeX * scale;
+  const scaledH = rangeY * scale;
+  const offX = (SIZE - scaledW) / 2;
+  const offY = (SIZE - scaledH) / 2;
+
+  return pts.map((p) => ({
+    x: (p.x - minX) * scale + offX,
+    y: (p.y - minY) * scale + offY,
   }));
 }
 
@@ -84,38 +92,44 @@ export function HoloMap({
 }: HoloMapProps) {
   const [collapsed, setCollapsed] = useState(false);
 
+  const { points, diverPos, polylineStr, landmarkPositions, totalRouteDist } = useMemo(() => {
+    if (!routeSteps || routeSteps.length === 0) {
+      return { points: [], diverPos: { x: 100, y: 100 }, polylineStr: '', landmarkPositions: [], totalRouteDist: 0 };
+    }
+
+    const raw = buildRoute(routeSteps);
+    const norm = fitToViewport(raw);
+
+    // Diver: interpolate between step nodes
+    const safeIndex = Math.max(0, Math.min(stepIndex, norm.length - 2));
+    const step = routeSteps[safeIndex];
+    const stepDist = step?.distance_m && step.distance_m > 0 ? step.distance_m : 25;
+    const t = Math.min(Math.max(stepDistance / stepDist, 0), 1);
+
+    const a = norm[safeIndex];
+    const b = norm[safeIndex + 1] || a;
+    const diver = {
+      x: a.x + (b.x - a.x) * t,
+      y: a.y + (b.y - a.y) * t,
+    };
+
+    const poly = norm.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+
+    // Spread landmarks evenly across waypoints
+    const lmPos = landmarks.slice(0, Math.max(norm.length, 1)).map((name, i) => {
+      const idx = landmarks.length <= 1 ? 0 : Math.round((i / (landmarks.length - 1)) * (norm.length - 1));
+      const pt = norm[idx] || norm[0];
+      return { name, x: pt.x, y: pt.y };
+    });
+
+    const totalDist = routeSteps.reduce((s, r) => s + (r.distance_m || 0), 0);
+
+    return { points: norm, diverPos: diver, polylineStr: poly, landmarkPositions: lmPos, totalRouteDist: totalDist };
+  }, [routeSteps, landmarks, stepIndex, stepDistance]);
+
   if (!routeSteps || routeSteps.length === 0) return null;
 
-  const SIZE = 200;
-  const PAD = 24;
-  const rawPoints = computeRoutePoints(routeSteps);
-  const points = normalizePoints(rawPoints, SIZE, SIZE, PAD);
-
-  // Diver position: interpolate between current step node and next
-  const clampedIndex = Math.min(stepIndex, points.length - 2);
-  const currentStep = routeSteps[clampedIndex];
-  const stepTotalDist = currentStep?.distance_m || 20;
-  const progress = Math.min(stepDistance / stepTotalDist, 1);
-
-  const diverX =
-    points[clampedIndex].x +
-    (points[clampedIndex + 1].x - points[clampedIndex].x) * progress;
-  const diverY =
-    points[clampedIndex].y +
-    (points[clampedIndex + 1].y - points[clampedIndex].y) * progress;
-
-  // Build polyline string
-  const polylineStr = points.map((p) => `${p.x},${p.y}`).join(' ');
-
-  // Assign landmarks to nearest waypoint (spread evenly if more landmarks than points)
-  const landmarkPositions = landmarks.slice(0, points.length).map((name, i) => {
-    const ptIndex = Math.round((i / Math.max(landmarks.length - 1, 1)) * (points.length - 1));
-    const pt = points[ptIndex] || points[0];
-    return { name, x: pt.x, y: pt.y };
-  });
-
-  // Total route distance
-  const totalRouteDist = routeSteps.reduce((s, r) => s + (r.distance_m || 0), 0);
+  const clampedIndex = Math.max(0, Math.min(stepIndex, points.length - 2));
 
   return (
     <motion.div
@@ -128,11 +142,7 @@ export function HoloMap({
         onClick={() => setCollapsed(!collapsed)}
         className="absolute -top-3 -right-3 z-30 p-1.5 rounded-full glass-panel text-dive-cyan hover:bg-dive-cyan/10 transition-all"
       >
-        {collapsed ? (
-          <Maximize2 className="w-3 h-3" />
-        ) : (
-          <Minimize2 className="w-3 h-3" />
-        )}
+        {collapsed ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
       </button>
 
       <AnimatePresence>
@@ -144,10 +154,9 @@ export function HoloMap({
             className="holo-map-container glass-panel p-2 relative overflow-hidden"
             style={{ width: SIZE + 16, height: SIZE + 48 }}
           >
-            {/* Holographic scan line */}
             <div className="holo-scanline" />
 
-            {/* Title bar */}
+            {/* Title */}
             <div className="flex items-center justify-between px-1 mb-1">
               <span className="hud-text text-[7px] text-dive-cyan/80">HOLO·MAP</span>
               <span className="hud-text text-[7px] text-white/30">
@@ -155,106 +164,57 @@ export function HoloMap({
               </span>
             </div>
 
-            <svg
-              width={SIZE}
-              height={SIZE}
-              viewBox={`0 0 ${SIZE} ${SIZE}`}
-              className="holo-map-svg"
-            >
-              {/* Grid background */}
+            <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} className="holo-map-svg">
               <defs>
                 <pattern id="holoGrid" width="20" height="20" patternUnits="userSpaceOnUse">
                   <path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(0,242,255,0.06)" strokeWidth="0.5" />
                 </pattern>
                 <filter id="glowCyan">
                   <feGaussianBlur stdDeviation="2" result="blur" />
-                  <feMerge>
-                    <feMergeNode in="blur" />
-                    <feMergeNode in="SourceGraphic" />
-                  </feMerge>
+                  <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
                 </filter>
                 <filter id="glowStrong">
                   <feGaussianBlur stdDeviation="3.5" result="blur" />
-                  <feMerge>
-                    <feMergeNode in="blur" />
-                    <feMergeNode in="blur" />
-                    <feMergeNode in="SourceGraphic" />
-                  </feMerge>
+                  <feMerge><feMergeNode in="blur" /><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
                 </filter>
               </defs>
 
               <rect width={SIZE} height={SIZE} fill="url(#holoGrid)" />
 
-              {/* Route path — shadow */}
-              <polyline
-                points={polylineStr}
-                fill="none"
-                stroke="rgba(0,242,255,0.15)"
-                strokeWidth="6"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                filter="url(#glowCyan)"
-              />
+              {/* Route glow */}
+              <polyline points={polylineStr} fill="none" stroke="rgba(0,242,255,0.15)" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" filter="url(#glowCyan)" />
 
-              {/* Route path — main */}
-              <polyline
-                points={polylineStr}
-                fill="none"
-                stroke="rgba(0,242,255,0.6)"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeDasharray="6 3"
-              />
+              {/* Route dashed line */}
+              <polyline points={polylineStr} fill="none" stroke="rgba(0,242,255,0.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="6 3" />
 
-              {/* Completed route highlight */}
+              {/* Completed segment */}
               {clampedIndex > 0 && (
                 <polyline
-                  points={points.slice(0, clampedIndex + 1).map((p) => `${p.x},${p.y}`).join(' ')}
-                  fill="none"
-                  stroke="rgba(0,242,255,0.9)"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+                  points={points.slice(0, clampedIndex + 1).map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')}
+                  fill="none" stroke="rgba(0,242,255,0.9)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
                 />
               )}
 
-              {/* Waypoint nodes */}
+              {/* Waypoints */}
               {points.map((pt, i) => (
                 <g key={i}>
                   <circle
-                    cx={pt.x}
-                    cy={pt.y}
-                    r={i === 0 || i === points.length - 1 ? 5 : 3.5}
+                    cx={pt.x} cy={pt.y}
+                    r={i === 0 || i === points.length - 1 ? 6 : 4}
                     fill={
-                      i === 0
-                        ? 'rgba(74,222,128,0.8)' // entry green
-                        : i === points.length - 1
-                        ? 'rgba(255,59,59,0.8)' // exit red
-                        : i <= clampedIndex
-                        ? 'rgba(0,242,255,0.7)' // completed
-                        : 'rgba(255,255,255,0.15)' // upcoming
+                      i === 0 ? 'rgba(74,222,128,0.8)'
+                      : i === points.length - 1 ? 'rgba(255,59,59,0.8)'
+                      : i <= clampedIndex ? 'rgba(0,242,255,0.7)'
+                      : 'rgba(255,255,255,0.15)'
                     }
                     stroke={
-                      i === 0
-                        ? 'rgba(74,222,128,0.4)'
-                        : i === points.length - 1
-                        ? 'rgba(255,59,59,0.4)'
-                        : 'rgba(0,242,255,0.2)'
+                      i === 0 ? 'rgba(74,222,128,0.4)'
+                      : i === points.length - 1 ? 'rgba(255,59,59,0.4)'
+                      : 'rgba(0,242,255,0.2)'
                     }
                     strokeWidth="1"
                   />
-                  {/* Step number */}
-                  <text
-                    x={pt.x}
-                    y={pt.y + 0.5}
-                    textAnchor="middle"
-                    dominantBaseline="central"
-                    className="fill-white"
-                    fontSize="5"
-                    fontWeight="bold"
-                    fontFamily="JetBrains Mono, monospace"
-                  >
+                  <text x={pt.x} y={pt.y + 0.5} textAnchor="middle" dominantBaseline="central" fill="white" fontSize="5" fontWeight="bold" fontFamily="JetBrains Mono, monospace">
                     {i === 0 ? '▶' : i === points.length - 1 ? '■' : i}
                   </text>
                 </g>
@@ -262,73 +222,57 @@ export function HoloMap({
 
               {/* Landmark labels */}
               {landmarkPositions.map((lm, i) => (
-                <text
-                  key={i}
-                  x={lm.x}
-                  y={lm.y - 10}
-                  textAnchor="middle"
-                  className="fill-white/40"
-                  fontSize="5"
-                  fontFamily="JetBrains Mono, monospace"
-                >
-                  {lm.name.length > 12 ? lm.name.slice(0, 12) + '…' : lm.name}
+                <text key={i} x={lm.x} y={lm.y - 12} textAnchor="middle" fill="rgba(255,255,255,0.4)" fontSize="5" fontFamily="JetBrains Mono, monospace">
+                  {lm.name.length > 14 ? lm.name.slice(0, 14) + '…' : lm.name}
                 </text>
               ))}
 
-              {/* Entry/Exit labels */}
-              <text x={points[0].x} y={points[0].y + 12} textAnchor="middle" fontSize="5" className="fill-green-400/70" fontFamily="JetBrains Mono, monospace">
-                ENTRY
-              </text>
-              <text x={points[points.length - 1].x} y={points[points.length - 1].y + 12} textAnchor="middle" fontSize="5" className="fill-dive-red/70" fontFamily="JetBrains Mono, monospace">
-                EXIT
-              </text>
+              {/* Entry / Exit labels */}
+              {points.length >= 2 && (
+                <>
+                  <text x={points[0].x} y={points[0].y + 14} textAnchor="middle" fontSize="5.5" fill="rgba(74,222,128,0.7)" fontFamily="JetBrains Mono, monospace">ENTRY</text>
+                  <text x={points[points.length - 1].x} y={points[points.length - 1].y + 14} textAnchor="middle" fontSize="5.5" fill="rgba(255,59,59,0.7)" fontFamily="JetBrains Mono, monospace">EXIT</text>
+                </>
+              )}
 
-              {/* Diver position */}
-              <circle cx={diverX} cy={diverY} r="6" fill="rgba(0,242,255,0.15)" filter="url(#glowStrong)">
-                <animate attributeName="r" values="6;9;6" dur="2s" repeatCount="indefinite" />
+              {/* Diver glow */}
+              <circle cx={diverPos.x} cy={diverPos.y} r="8" fill="rgba(0,242,255,0.1)" filter="url(#glowStrong)">
+                <animate attributeName="r" values="8;12;8" dur="2s" repeatCount="indefinite" />
               </circle>
-              <circle cx={diverX} cy={diverY} r="4" fill="rgba(0,242,255,0.3)" filter="url(#glowCyan)">
-                <animate attributeName="opacity" values="0.3;0.8;0.3" dur="2s" repeatCount="indefinite" />
+              <circle cx={diverPos.x} cy={diverPos.y} r="5" fill="rgba(0,242,255,0.25)" filter="url(#glowCyan)">
+                <animate attributeName="opacity" values="0.25;0.7;0.25" dur="2s" repeatCount="indefinite" />
               </circle>
-              <circle cx={diverX} cy={diverY} r="2.5" fill="#00f2ff" />
+              <circle cx={diverPos.x} cy={diverPos.y} r="3" fill="#00f2ff" />
 
-              {/* Diver heading indicator */}
+              {/* Heading arrow */}
               {(() => {
-                const angle = headingToAngle(currentHeading);
-                const tipX = diverX + 10 * Math.cos(angle);
-                const tipY = diverY - 10 * Math.sin(angle);
+                const rad = (currentHeading * Math.PI) / 180;
                 return (
                   <line
-                    x1={diverX}
-                    y1={diverY}
-                    x2={tipX}
-                    y2={tipY}
-                    stroke="#00f2ff"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    opacity="0.7"
+                    x1={diverPos.x} y1={diverPos.y}
+                    x2={diverPos.x + 12 * Math.sin(rad)} y2={diverPos.y - 12 * Math.cos(rad)}
+                    stroke="#00f2ff" strokeWidth="1.5" strokeLinecap="round" opacity="0.7"
                   />
                 );
               })()}
 
               {/* Compass rose */}
-              <g transform={`translate(${SIZE - 16}, 16)`}>
-                <circle r="10" fill="rgba(0,0,0,0.4)" stroke="rgba(0,242,255,0.2)" strokeWidth="0.5" />
-                <text y="-3" textAnchor="middle" fontSize="5" fontWeight="bold" className="fill-dive-cyan" fontFamily="JetBrains Mono, monospace">N</text>
-                <text y="7" textAnchor="middle" fontSize="4" className="fill-white/30" fontFamily="JetBrains Mono, monospace">S</text>
-                <text x="-1" y="2" textAnchor="end" fontSize="4" className="fill-white/30" fontFamily="JetBrains Mono, monospace">W</text>
-                <text x="1" y="2" textAnchor="start" fontSize="4" className="fill-white/30" fontFamily="JetBrains Mono, monospace">E</text>
+              <g transform={`translate(${SIZE - 18}, 18)`}>
+                <circle r="12" fill="rgba(0,0,0,0.5)" stroke="rgba(0,242,255,0.2)" strokeWidth="0.5" />
+                <text y="-4" textAnchor="middle" fontSize="6" fontWeight="bold" fill="#00f2ff" fontFamily="JetBrains Mono, monospace">N</text>
+                <text y="8" textAnchor="middle" fontSize="4.5" fill="rgba(255,255,255,0.3)" fontFamily="JetBrains Mono, monospace">S</text>
+                <text x="-5" y="2.5" textAnchor="middle" fontSize="4.5" fill="rgba(255,255,255,0.3)" fontFamily="JetBrains Mono, monospace">W</text>
+                <text x="5" y="2.5" textAnchor="middle" fontSize="4.5" fill="rgba(255,255,255,0.3)" fontFamily="JetBrains Mono, monospace">E</text>
               </g>
             </svg>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Collapsed mini indicator */}
+      {/* Collapsed */}
       {collapsed && (
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }}
           className="glass-panel p-2 flex items-center gap-2 cursor-pointer"
           onClick={() => setCollapsed(false)}
         >
