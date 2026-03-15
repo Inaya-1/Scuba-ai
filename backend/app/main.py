@@ -5,8 +5,9 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from app.ws_handler import route_message
-from app.config import GEMINI_API_KEY
+from app.config import GEMINI_API_KEY, ACCESS_CODE
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,10 +31,23 @@ async def health():
     return {"status": "ok"}
 
 
-@app.get("/api/token")
-async def get_token():
-    """Serve the Gemini API key to authenticated frontend clients.
-    In production, gate this behind auth (session cookie, JWT, etc.)."""
+class AccessRequest(BaseModel):
+    code: str
+
+
+@app.post("/api/verify")
+async def verify_access(req: AccessRequest):
+    """Verify access code before allowing dive session."""
+    if req.code == ACCESS_CODE:
+        return {"valid": True}
+    return {"valid": False}
+
+
+@app.post("/api/token")
+async def get_token(req: AccessRequest):
+    """Serve the Gemini API key only after access code verification."""
+    if req.code != ACCESS_CODE:
+        return {"error": "Invalid access code"}
     return {"apiKey": GEMINI_API_KEY}
 
 

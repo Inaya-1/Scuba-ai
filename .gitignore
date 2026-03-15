@@ -1,1 +1,3 @@
 .DS_Store
+# Deployment config with secrets
+app.yaml

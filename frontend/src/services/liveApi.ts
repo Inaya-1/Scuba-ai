@@ -18,18 +18,22 @@ export class GeminiLive {
     return this.session !== null;
   }
 
-  async connect(callbacks: LiveCallbacks) {
+  async connect(callbacks: LiveCallbacks, accessCode?: string) {
     this.callbacks = callbacks;
 
     try {
-      // Fetch API key from backend
-      const res = await fetch("/api/token");
-      const { apiKey } = await res.json();
-      if (!apiKey || apiKey === "placeholder") {
-        throw new Error("Gemini API key not configured on backend");
+      // Fetch API key from backend (gated by access code)
+      const res = await fetch("/api/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: accessCode || "" }),
+      });
+      const data = await res.json();
+      if (data.error || !data.apiKey || data.apiKey === "placeholder") {
+        throw new Error(data.error || "Gemini API key not configured on backend");
       }
 
-      this.ai = new GoogleGenAI({ apiKey });
+      this.ai = new GoogleGenAI({ apiKey: data.apiKey });
 
       this.session = await this.ai.live.connect({
         model: "gemini-2.5-flash-live-001",
