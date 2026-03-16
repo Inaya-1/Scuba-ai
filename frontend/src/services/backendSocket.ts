@@ -114,6 +114,16 @@ export class ScubaSocket {
     }));
   }
 
+  /** Refine the current map analysis with user feedback */
+  sendMapRefine(feedback: string) {
+    if (!this.connected) return;
+    this.ws!.send(JSON.stringify({
+      type: "map_refine",
+      payload: "",
+      metadata: { timestamp: Date.now(), feedback },
+    }));
+  }
+
   /** User-triggered species identification ("What is this?") */
   sendIdentify(base64: string, prompt?: string) {
     if (!this.connected) return;

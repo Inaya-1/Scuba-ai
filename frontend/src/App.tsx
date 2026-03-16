@@ -1,18 +1,19 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Mic, Map as MapIcon, Power, Info, Fish, Upload, Microscope, Waves, MessageSquare } from 'lucide-react';
+import { Mic, Map as MapIcon, Power, Info, Fish, Upload, Microscope, Waves, MessageSquare, Settings } from 'lucide-react';
 import { LandingPage } from './components/LandingPage';
 import { CameraFeed, CameraFeedHandle } from './components/CameraFeed';
 import { HUD } from './components/HUD';
 import { ResponseOverlay } from './components/ResponseOverlay';
 import { MapUpload } from './components/MapUpload';
 import { RouteOverlay } from './components/RouteOverlay';
+import { AdminConsole } from './components/AdminConsole';
 import { HoloMap } from './components/HoloMap';
 import { DiveState, AgentResponse, UIMode } from './types';
 import { scubaSocket } from './services/backendSocket';
 import { geminiLive } from './services/liveApi';
 import { AudioCapture } from './services/audioCapture';
-import { speakSpecies } from './services/ttsService';
+import { speakScoobi } from './services/ttsService';
 
 const audioCapture = new AudioCapture();
 
@@ -36,6 +37,7 @@ export default function App() {
   const [responses, setResponses] = useState<AgentResponse[]>([]);
   const [showMap, setShowMap] = useState(false);
   const [showAgentCards, setShowAgentCards] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
   const showAgentCardsRef = useRef(false);
   const [demoVideo, setDemoVideo] = useState<string | null>(null);
   const [mapAnalysis, setMapAnalysis] = useState<{
@@ -56,6 +58,8 @@ export default function App() {
   const cameraRef = useRef<CameraFeedHandle>(null);
   // Once the backend sends real gauge data, stop overwriting with simulation
   const hasRealGaugeData = useRef(false);
+  // Guard: only accept one map analysis per upload/refine cycle
+  const hasMapAnalysis = useRef(false);
 
   // Keep ref in sync with state for use inside WS callback closure
   useEffect(() => { showAgentCardsRef.current = showAgentCards; }, [showAgentCards]);
@@ -85,10 +89,15 @@ export default function App() {
           metadata: res.metadata,
         });
 
-        // TTS for species identification
-        if (res.agent === 'bio' && res.type === 'species' && res.metadata) {
-          const tts = res.metadata.tts_text || `${res.metadata.common_name}. ${res.metadata.safety_advice || ''}`;
-          speakSpecies(tts, res.metadata.safety_level);
+        // Scoobi master TTS — speaks for any agent with tts_text
+        if (res.metadata?.tts_text) {
+          const urgent = res.metadata.alert_level === 'critical'
+            || (res.agent === 'safety' && (res.priority === 'critical' || res.priority === 'high'));
+          speakScoobi(res.metadata.tts_text, urgent);
+        } else if (res.agent === 'bio' && res.type === 'species' && res.metadata) {
+          // Fallback for bio responses without tts_text
+          const tts = `${res.metadata.common_name}. ${res.metadata.safety_advice || ''}`;
+          speakScoobi(tts, false);
         }
 
         // Always show critical safety alerts as cards regardless of toggle
@@ -112,11 +121,11 @@ export default function App() {
           });
         }
 
-        // Capture nav map analysis metadata — only on first response with route_steps (from map upload)
-        if (res.agent === 'nav' && res.metadata?.route_steps && !mapLockedRef.current) {
+        // Capture nav map analysis — only from explicit map_upload/map_refine responses (tagged by backend)
+        const source = res.metadata?._source;
+        if (res.agent === 'nav' && res.metadata?.route_steps && (source === 'map_upload' || source === 'map_refine')) {
           setMapAnalysis(res.metadata as typeof mapAnalysis);
           setMapError(null);
-          mapLockedRef.current = true;
         }
         // Capture nav distance data from visual odometry
         if (res.agent === 'nav' && res.metadata?.total_distance_m != null) {
@@ -346,6 +355,32 @@ export default function App() {
     });
   }, []);
 
+  const handleAdminInject = useCallback((res: AgentResponse) => {
+    // Scoobi TTS for simulated response
+    if (res.metadata?.tts_text) {
+      const urgent = res.metadata.alert_level === 'critical'
+        || (res.agent === 'safety' && (res.priority === 'critical' || res.priority === 'high'));
+      speakScoobi(res.metadata.tts_text, urgent);
+    }
+
+    // Show as card
+    setResponses(prev => {
+      const withoutSafety = prev.filter(r => r.agent !== 'safety');
+      return [res, ...withoutSafety].slice(0, 3);
+    });
+
+    // Update HUD dive state from simulated metrics
+    if (res.metadata) {
+      const m = res.metadata;
+      setDiveState(prev => ({
+        ...prev,
+        ...(m.depth_m != null && { depth: m.depth_m }),
+        ...(m.bar != null && { airPressure: m.bar }),
+        ...(m.temp_c != null && { waterTemp: m.temp_c }),
+      }));
+    }
+  }, []);
+
   const endDive = useCallback(() => {
     audioCapture.stop();
     scubaSocket.disconnect();
@@ -356,6 +391,7 @@ export default function App() {
     setResponses([]);
     setShowMap(false);
     setShowAgentCards(false);
+    setShowAdmin(false);
     setDemoVideo(null);
     setMapAnalysis(null);
     setMapError(null);
@@ -368,6 +404,7 @@ export default function App() {
     frameCountRef.current = 0;
     headingRef.current = 245;
     hasRealGaugeData.current = false;
+    hasMapAnalysis.current = false;
   }, []);
 
   return (
@@ -470,6 +507,14 @@ export default function App() {
             </button>
 
             <button
+              onClick={() => setShowAdmin(!showAdmin)}
+              className={`p-4 rounded-full glass-panel transition-all active:scale-90 ${showAdmin ? 'text-dive-cyan border-dive-cyan/50' : 'text-white/60'}`}
+              title="Admin Console"
+            >
+              <Settings className="w-6 h-6" />
+            </button>
+
+            <button
               onClick={endDive}
               className="p-4 rounded-full glass-panel text-dive-red/80 active:scale-90 hover:bg-dive-red/10 transition-all"
               title="End Dive"
@@ -482,8 +527,10 @@ export default function App() {
           <AnimatePresence>
             {showMap && (
               <MapUpload
-                onUpload={(base64) => { setMapError(null); setMapAnalysis(null); mapLockedRef.current = false; scubaSocket.sendMap(base64); }}
+                onUpload={(base64) => { setMapError(null); setMapAnalysis(null); mapLockedRef.current = false; hasMapAnalysis.current = false; scubaSocket.sendMap(base64); }}
                 onClose={() => setShowMap(false)}
+                onConfirm={() => { mapLockedRef.current = true; }}
+                onRefine={(feedback) => { setMapAnalysis(null); setMapError(null); hasMapAnalysis.current = false; scubaSocket.sendMapRefine(feedback); }}
                 analysis={mapAnalysis}
                 error={mapError}
               />
@@ -514,6 +561,13 @@ export default function App() {
               totalDistance={navDistance.total}
             />
           )}
+
+          {/* Admin Console */}
+          <AdminConsole
+            open={showAdmin}
+            onClose={() => setShowAdmin(false)}
+            onInject={handleAdminInject}
+          />
 
           {/* Status Indicators (hidden in diver mode) */}
           {uiMode === 'marine-biologist' && <div className="absolute top-6 left-1/2 -translate-x-1/2 flex items-center gap-4">

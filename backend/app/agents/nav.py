@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 # In-memory cache of the last analyzed map (persists for the session)
 _cached_map: dict | None = None
+_cached_map_image: str | None = None  # base64 of the original map image for refinement
 _current_step_index: int = 0
 
 # Visual odometry state
@@ -31,7 +32,7 @@ def _get_turn_direction(diff: float) -> str:
 
 async def handle_map_upload(payload: str, metadata: dict) -> dict:
     """Analyze a hand-drawn dive site map and cache the landmarks."""
-    global _cached_map, _current_step_index, _total_distance_m, _step_distance_m, _last_frame_time, _prev_landmarks_seen
+    global _cached_map, _cached_map_image, _current_step_index, _total_distance_m, _step_distance_m, _last_frame_time, _prev_landmarks_seen
     _current_step_index = 0
     _total_distance_m = 0.0
     _step_distance_m = 0.0
@@ -45,13 +46,63 @@ async def handle_map_upload(payload: str, metadata: dict) -> dict:
         )
         output = AgentOutput(**result)
         _cached_map = output.metadata
-        return output.model_dump()
+        _cached_map_image = payload
+        data = output.model_dump()
+        if data.get("metadata") is None:
+            data["metadata"] = {}
+        data["metadata"]["_source"] = "map_upload"
+        return data
     except Exception as e:
         logger.error(f"NavAgent map error: {e}")
         return AgentOutput(
             agent="nav",
             type="navigation",
             content=f"Could not analyze map: {str(e)[:100]}",
+            priority=0,
+        ).model_dump()
+
+
+async def handle_map_refine(metadata: dict) -> dict:
+    """Re-analyze the cached map image with user feedback to correct landmarks/route."""
+    global _cached_map, _current_step_index, _total_distance_m, _step_distance_m, _last_frame_time, _prev_landmarks_seen
+
+    if not _cached_map_image:
+        return AgentOutput(
+            agent="nav",
+            type="navigation",
+            content="No map to refine. Upload a map first.",
+            priority=1,
+        ).model_dump()
+
+    feedback = metadata.get("feedback", "")
+    prev_analysis = _cached_map or {}
+
+    _current_step_index = 0
+    _total_distance_m = 0.0
+    _step_distance_m = 0.0
+    _last_frame_time = None
+    _prev_landmarks_seen = []
+
+    try:
+        context = (
+            f"You previously analyzed this map and produced: {prev_analysis}. "
+            f"The diver wants corrections: \"{feedback}\". "
+            f"Re-analyze the map with this feedback. Fix any missed landmarks, adjust the route, and return updated JSON."
+        )
+        result = await call_gemini(NAV_PROMPT, _cached_map_image, context)
+        output = AgentOutput(**result)
+        _cached_map = output.metadata
+        data = output.model_dump()
+        if data.get("metadata") is None:
+            data["metadata"] = {}
+        data["metadata"]["_source"] = "map_refine"
+        return data
+    except Exception as e:
+        logger.error(f"NavAgent refine error: {e}")
+        return AgentOutput(
+            agent="nav",
+            type="navigation",
+            content=f"Could not refine map: {str(e)[:100]}",
             priority=0,
         ).model_dump()
 

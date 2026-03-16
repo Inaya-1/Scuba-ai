@@ -13,7 +13,7 @@ import asyncio
 import logging
 from app.agents.safety import handle_gauge_frame
 from app.agents.bio import handle_bio_frame, handle_identify
-from app.agents.nav import handle_map_upload, handle_nav_frame, get_cached_map
+from app.agents.nav import handle_map_upload, handle_map_refine, handle_nav_frame, get_cached_map
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,9 @@ async def route_message(msg_type: str, payload: str, metadata: dict) -> dict | l
 
     if msg_type == "map_upload":
         return await handle_map_upload(payload, metadata)
+
+    if msg_type == "map_refine":
+        return await handle_map_refine(metadata)
 
     if msg_type == "identify":
         return await handle_identify(payload, metadata)
