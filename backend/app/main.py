@@ -223,7 +223,8 @@ async def websocket_endpoint(websocket: WebSocket):
             metadata = data.get("metadata", {})
 
             result = await route_message(msg_type, payload, metadata)
-            await websocket.send_json(result)
+            if result is not None:
+                await websocket.send_json(result)
 
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
