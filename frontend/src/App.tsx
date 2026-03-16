@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Mic, Map as MapIcon, Power, Info, Fish, Upload, Microscope, Waves } from 'lucide-react';
+import { Mic, Map as MapIcon, Power, Info, Fish, Upload, Microscope, Waves, MessageSquare } from 'lucide-react';
 import { LandingPage } from './components/LandingPage';
 import { CameraFeed, CameraFeedHandle } from './components/CameraFeed';
 import { HUD } from './components/HUD';
@@ -35,6 +35,8 @@ export default function App() {
   const [modeFlash, setModeFlash] = useState<string | null>(null);
   const [responses, setResponses] = useState<AgentResponse[]>([]);
   const [showMap, setShowMap] = useState(false);
+  const [showAgentCards, setShowAgentCards] = useState(false);
+  const showAgentCardsRef = useRef(false);
   const [demoVideo, setDemoVideo] = useState<string | null>(null);
   const [mapAnalysis, setMapAnalysis] = useState<{
     landmarks: string[];
@@ -55,34 +57,60 @@ export default function App() {
   // Once the backend sends real gauge data, stop overwriting with simulation
   const hasRealGaugeData = useRef(false);
 
+  // Keep ref in sync with state for use inside WS callback closure
+  useEffect(() => { showAgentCardsRef.current = showAgentCards; }, [showAgentCards]);
+
+  // Clear agent cards when toggle is turned off
+  useEffect(() => {
+    if (!showAgentCards) {
+      setResponses(prev => prev.filter(r => r.agent === 'safety' && (r.priority === 'critical' || r.priority === 'high')));
+    }
+  }, [showAgentCards]);
+
   // ── Backend WebSocket: structured analysis + map uploads ──
   useEffect(() => {
     if (!isStarted) return;
 
     scubaSocket.connect({
       onResponse: (res) => {
-        setResponses(prev => {
-          // Safety and nav responses replace their existing card instead of stacking
-          if (res.agent === 'safety') {
-            const withoutSafety = prev.filter(r => r.agent !== 'safety');
-            return [res, ...withoutSafety].slice(0, 3);
-          }
-          if (res.agent === 'nav') {
-            const withoutNav = prev.filter(r => r.agent !== 'nav');
-            return [res, ...withoutNav].slice(0, 3);
-          }
-          // Replace "Identifying species..." loading cards when a real bio response arrives
-          if (res.agent === 'bio') {
-            const withoutBio = prev.filter(r => r.agent !== 'bio');
-            // TTS for species identification
-            if (res.type === 'species' && res.metadata) {
-              const tts = res.metadata.tts_text || `${res.metadata.common_name}. ${res.metadata.safety_advice || ''}`;
-              speakSpecies(tts, res.metadata.safety_level);
-            }
-            return [res, ...withoutBio].slice(0, 3);
-          }
-          return [res, ...prev].slice(0, 3);
+        // Forward all agent responses to Live API as context for unified narration
+        const priorityNum = res.priority === 'critical' ? 9
+          : res.priority === 'high' ? 6
+          : res.priority === 'medium' ? 3 : 1;
+        geminiLive.sendAgentReport({
+          agent: res.agent,
+          type: res.type,
+          content: res.content,
+          priority: priorityNum,
+          metadata: res.metadata,
         });
+
+        // TTS for species identification
+        if (res.agent === 'bio' && res.type === 'species' && res.metadata) {
+          const tts = res.metadata.tts_text || `${res.metadata.common_name}. ${res.metadata.safety_advice || ''}`;
+          speakSpecies(tts, res.metadata.safety_level);
+        }
+
+        // Always show critical safety alerts as cards regardless of toggle
+        const isCritical = res.agent === 'safety' && (res.priority === 'critical' || res.priority === 'high');
+
+        if (showAgentCardsRef.current || isCritical) {
+          setResponses(prev => {
+            if (res.agent === 'safety') {
+              const withoutSafety = prev.filter(r => r.agent !== 'safety');
+              return [res, ...withoutSafety].slice(0, 3);
+            }
+            if (res.agent === 'nav') {
+              const withoutNav = prev.filter(r => r.agent !== 'nav');
+              return [res, ...withoutNav].slice(0, 3);
+            }
+            if (res.agent === 'bio') {
+              const withoutBio = prev.filter(r => r.agent !== 'bio');
+              return [res, ...withoutBio].slice(0, 3);
+            }
+            return [res, ...prev].slice(0, 3);
+          });
+        }
 
         // Capture nav map analysis metadata — only on first response with route_steps (from map upload)
         if (res.agent === 'nav' && res.metadata?.route_steps && !mapLockedRef.current) {
@@ -143,6 +171,7 @@ export default function App() {
           type: 'info',
           content: text,
           priority: 'medium',
+          _ts: Date.now(),
         }, ...prev].slice(0, 3));
       },
       onAudioData: (pcmBase64) => {
@@ -161,14 +190,18 @@ export default function App() {
     };
   }, [isStarted, accessCode]);
 
-  // ── Auto-dismiss response cards after 8 seconds ──
+  // ── Auto-dismiss response cards after 6 seconds ──
   useEffect(() => {
     if (responses.length === 0) return;
-    const timer = setTimeout(() => {
-      setResponses(prev => prev.slice(0, -1));
-    }, 8000);
-    return () => clearTimeout(timer);
-  }, [responses]);
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setResponses(prev => prev.filter(r => {
+        const age = now - (r._ts ?? now);
+        return age < 6000;
+      }));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [responses.length > 0]);
 
   // ── Simulate dive metrics (stop depth/air drift once real gauge data arrives) ──
   useEffect(() => {
@@ -275,6 +308,7 @@ export default function App() {
       type: 'info',
       content: 'Identifying species...',
       priority: 'low',
+      _ts: Date.now(),
     }, ...prev].slice(0, 3));
 
     scubaSocket.sendIdentify(freshFrame, "What is this?");
@@ -321,6 +355,7 @@ export default function App() {
     setLiveConnected(false);
     setResponses([]);
     setShowMap(false);
+    setShowAgentCards(false);
     setDemoVideo(null);
     setMapAnalysis(null);
     setMapError(null);
@@ -425,6 +460,14 @@ export default function App() {
               onChange={handleDemoUpload}
               className="hidden"
             />
+
+            <button
+              onClick={() => setShowAgentCards(!showAgentCards)}
+              className={`p-4 rounded-full glass-panel transition-all active:scale-90 ${showAgentCards ? 'text-dive-cyan border-dive-cyan/50' : 'text-white/60'}`}
+              title={showAgentCards ? 'Hide agent cards' : 'Show agent cards'}
+            >
+              <MessageSquare className="w-6 h-6" />
+            </button>
 
             <button
               onClick={endDive}

@@ -14,6 +14,7 @@ function parseResponse(data: any): AgentResponse {
     content: data.content ?? "",
     priority: typeof data.priority === "number" ? mapPriority(data.priority) : data.priority ?? "low",
     metadata: data.metadata,
+    _ts: Date.now(),
   };
 }
 
