@@ -48,32 +48,21 @@ async def route_message(msg_type: str, payload: str, metadata: dict) -> dict | l
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Filter out errors, keep valid responses, return highest-priority one
+        # Filter out errors and low-priority "no data" responses
         valid = []
         for r in results:
             if isinstance(r, Exception):
                 logger.error(f"Agent error: {r}")
             elif isinstance(r, dict):
+                # Skip empty safety readings (no gauges visible, priority 0)
+                if r.get("agent") == "safety" and r.get("priority", 0) == 0:
+                    continue
                 valid.append(r)
 
         if not valid:
-            return {
-                "agent": "manager",
-                "type": "info",
-                "content": "Analysis unavailable.",
-                "priority": 0,
-                "metadata": {},
-            }
+            return None
 
-        # Return the highest-priority result to keep the overlay clean
-        valid.sort(key=lambda x: x.get("priority", 0), reverse=True)
-        best = valid[0]
-
-        # If there's a hazard, always surface it regardless of other results
-        hazards = [r for r in valid if r.get("type") == "hazard"]
-        if hazards:
-            best = hazards[0]
-
-        return best
+        # Return all valid results so each agent's response reaches the frontend
+        return valid if len(valid) > 1 else valid[0]
 
     return {"error": f"Unknown message type: {msg_type}"}
