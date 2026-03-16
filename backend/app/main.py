@@ -1,13 +1,14 @@
 import json
 import logging
 from pathlib import Path
+import httpx
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from app.ws_handler import route_message
-from app.config import GEMINI_API_KEY, ACCESS_CODE
+from app.config import GEMINI_API_KEY, ACCESS_CODE, ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID
 from app.agents.bio import get_species_log
 
 logging.basicConfig(level=logging.INFO)
@@ -56,6 +57,43 @@ async def get_token(req: AccessRequest):
 async def species_log():
     """Return all species identified this session."""
     return {"species": get_species_log()}
+
+
+class TTSRequest(BaseModel):
+    text: str
+    urgent: bool = False
+
+
+@app.post("/api/tts")
+async def text_to_speech(req: TTSRequest):
+    """Proxy text to ElevenLabs TTS and return audio/mpeg bytes."""
+    if not ELEVENLABS_API_KEY:
+        return Response(status_code=503, content="ElevenLabs API key not configured")
+    if len(req.text) > 200:
+        return Response(status_code=400, content="Text exceeds 200 character limit")
+
+    voice_settings = {
+        "stability": 0.25 if req.urgent else 0.35,
+        "similarity_boost": 0.75,
+        "style": 0.6 if req.urgent else 0.45,
+        "use_speaker_boost": True,
+    }
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
+            headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
+            json={
+                "text": req.text,
+                "model_id": "eleven_flash_v2_5",
+                "voice_settings": voice_settings,
+                "output_format": "mp3_22050_32",
+            },
+        )
+        if resp.status_code != 200:
+            logger.error(f"ElevenLabs error {resp.status_code}: {resp.text}")
+            return Response(status_code=502, content="TTS provider error")
+        return Response(content=resp.content, media_type="audio/mpeg")
 
 
 @app.websocket("/ws")

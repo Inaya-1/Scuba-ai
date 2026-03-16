@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { AnimatePresence } from 'motion/react';
-import { Mic, Map as MapIcon, Power, Info, Fish, Upload } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
+import { Mic, Map as MapIcon, Power, Info, Fish, Upload, Microscope, Waves } from 'lucide-react';
 import { LandingPage } from './components/LandingPage';
 import { CameraFeed, CameraFeedHandle } from './components/CameraFeed';
 import { HUD } from './components/HUD';
@@ -8,10 +8,11 @@ import { ResponseOverlay } from './components/ResponseOverlay';
 import { MapUpload } from './components/MapUpload';
 import { RouteOverlay } from './components/RouteOverlay';
 import { HoloMap } from './components/HoloMap';
-import { DiveState, AgentResponse } from './types';
+import { DiveState, AgentResponse, UIMode } from './types';
 import { scubaSocket } from './services/backendSocket';
 import { geminiLive } from './services/liveApi';
 import { AudioCapture } from './services/audioCapture';
+import { speakSpecies } from './services/ttsService';
 
 const audioCapture = new AudioCapture();
 
@@ -30,6 +31,8 @@ export default function App() {
     isRecording: false,
     isListening: false,
   });
+  const [uiMode, setUiMode] = useState<UIMode>('marine-biologist');
+  const [modeFlash, setModeFlash] = useState<string | null>(null);
   const [responses, setResponses] = useState<AgentResponse[]>([]);
   const [showMap, setShowMap] = useState(false);
   const [demoVideo, setDemoVideo] = useState<string | null>(null);
@@ -71,6 +74,11 @@ export default function App() {
           // Replace "Identifying species..." loading cards when a real bio response arrives
           if (res.agent === 'bio') {
             const withoutBio = prev.filter(r => r.agent !== 'bio');
+            // TTS for species identification
+            if (res.type === 'species' && res.metadata) {
+              const tts = res.metadata.tts_text || `${res.metadata.common_name}. ${res.metadata.safety_advice || ''}`;
+              speakSpecies(tts, res.metadata.safety_level);
+            }
             return [res, ...withoutBio].slice(0, 3);
           }
           return [res, ...prev].slice(0, 3);
@@ -259,7 +267,7 @@ export default function App() {
 
   // ── Marine ID: "What is this?" trigger ──
   const handleIdentify = useCallback(() => {
-    const freshFrame = cameraRef.current?.captureFrame() || latestFrameRef.current;
+    const freshFrame = cameraRef.current?.captureFrame();
     if (!freshFrame) return;
 
     setResponses(prev => [{
@@ -295,6 +303,15 @@ export default function App() {
     audioCapture.stop();
   }, []);
 
+  const toggleMode = useCallback(() => {
+    setUiMode(prev => {
+      const next = prev === 'marine-biologist' ? 'diver' : 'marine-biologist';
+      setModeFlash(next === 'diver' ? 'DIVER MODE' : 'BIO MODE');
+      setTimeout(() => setModeFlash(null), 1500);
+      return next;
+    });
+  }, []);
+
   const endDive = useCallback(() => {
     audioCapture.stop();
     scubaSocket.disconnect();
@@ -327,11 +344,11 @@ export default function App() {
       {isStarted && (
         <>
           <CameraFeed ref={cameraRef} onFrame={handleFrame} isStreaming={isStarted} demoVideoUrl={demoVideo} />
-          <HUD state={diveState} compassAvailable={compassAvailable} />
-          <ResponseOverlay responses={responses} />
+          <HUD state={diveState} compassAvailable={compassAvailable} mode={uiMode} />
+          <ResponseOverlay responses={responses} mode={uiMode} />
 
-          {/* Connection indicators — positioned below HUD top bar */}
-          <div className="absolute top-20 left-6 z-30 flex flex-col gap-2">
+          {/* Connection indicators — positioned below HUD top bar (hidden in diver mode) */}
+          {uiMode === 'marine-biologist' && <div className="absolute top-20 left-6 z-30 flex flex-col gap-2">
             <div className="flex items-center gap-2 px-3 py-1 glass-panel rounded-full">
               <div className={`w-2 h-2 rounded-full ${backendConnected ? 'bg-green-400 animate-pulse' : 'bg-dive-red'}`} />
               <span className="hud-text text-[8px]">BACKEND</span>
@@ -340,10 +357,33 @@ export default function App() {
               <div className={`w-2 h-2 rounded-full ${liveConnected ? 'bg-dive-cyan animate-pulse' : 'bg-dive-red'}`} />
               <span className="hud-text text-[8px]">LIVE AI</span>
             </div>
-          </div>
+          </div>}
+
+          {/* Mode flash indicator */}
+          <AnimatePresence>
+            {modeFlash && (
+              <motion.div
+                key={modeFlash}
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8 }}
+                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 px-6 py-3 glass-panel rounded-xl"
+              >
+                <span className="text-2xl font-bold text-dive-cyan tracking-widest">{modeFlash}</span>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* Interaction Controls */}
           <div className="absolute bottom-24 left-1/2 -translate-x-1/2 flex items-center gap-6 pointer-events-auto">
+            <button
+              onClick={toggleMode}
+              className={`p-4 rounded-full glass-panel transition-all active:scale-90 ${uiMode === 'diver' ? 'text-dive-cyan border-dive-cyan/50' : 'text-white/60'}`}
+              title={uiMode === 'diver' ? 'Switch to Bio Mode' : 'Switch to Diver Mode'}
+            >
+              {uiMode === 'diver' ? <Waves className="w-6 h-6" /> : <Microscope className="w-6 h-6" />}
+            </button>
+
             <button
               onClick={() => setShowMap(!showMap)}
               className={`p-4 rounded-full glass-panel transition-all active:scale-90 ${showMap ? 'text-dive-cyan border-dive-cyan/50' : 'text-white/60'}`}
@@ -432,8 +472,8 @@ export default function App() {
             />
           )}
 
-          {/* Status Indicators */}
-          <div className="absolute top-6 left-1/2 -translate-x-1/2 flex items-center gap-4">
+          {/* Status Indicators (hidden in diver mode) */}
+          {uiMode === 'marine-biologist' && <div className="absolute top-6 left-1/2 -translate-x-1/2 flex items-center gap-4">
             <div className="flex items-center gap-2 px-3 py-1 glass-panel rounded-full">
               <div className="w-2 h-2 rounded-full bg-dive-cyan animate-pulse" />
               <span className="hud-text text-[8px]">REC {Math.floor(diveState.bottomTime / 60).toString().padStart(2, '0')}:{(diveState.bottomTime % 60).toString().padStart(2, '0')}</span>
@@ -442,7 +482,7 @@ export default function App() {
               <Info className="w-3 h-3 text-dive-cyan" />
               <span className="hud-text text-[8px]">{liveConnected ? 'LIVE AI ACTIVE' : 'CONNECTING...'}</span>
             </div>
-          </div>
+          </div>}
         </>
       )}
     </div>
