@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, ChangeEvent } from 'react';
 import { motion } from 'motion/react';
-import { Camera, Upload, X, Loader2, MapPin, Navigation, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Camera, Upload, X, Loader2, MapPin, Navigation, CheckCircle, AlertTriangle, RefreshCw, Check } from 'lucide-react';
 
 interface RouteStep {
   heading: number;
@@ -20,6 +20,8 @@ interface MapAnalysis {
 interface MapUploadProps {
   onUpload: (base64: string) => void;
   onClose: () => void;
+  onConfirm: () => void;
+  onRefine: (feedback: string) => void;
   analysis: MapAnalysis | null;
   error: string | null;
 }
@@ -31,10 +33,12 @@ const LOADING_STEPS = [
   { label: 'Building route...', delay: 7000 },
 ];
 
-export function MapUpload({ onUpload, onClose, analysis, error }: MapUploadProps) {
+export function MapUpload({ onUpload, onClose, onConfirm, onRefine, analysis, error }: MapUploadProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState(0);
   const [preview, setPreview] = useState<string | null>(null);
+  const [showRefine, setShowRefine] = useState(false);
+  const [refineText, setRefineText] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const captureInputRef = useRef<HTMLInputElement>(null);
 
@@ -226,17 +230,79 @@ export function MapUpload({ onUpload, onClose, analysis, error }: MapUploadProps
             )}
 
             {/* Confidence */}
-            {analysis.confidence != null && (
-              <div className="flex items-center gap-2">
-                <CheckCircle className={`w-4 h-4 ${analysis.confidence > 0.7 ? 'text-green-400' : analysis.confidence > 0.4 ? 'text-dive-orange' : 'text-dive-red'}`} />
-                <span className="hud-text text-[9px]">Confidence: {Math.round(analysis.confidence * 100)}%</span>
+            <div className="flex items-center gap-2">
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 text-dive-cyan animate-spin" />
+                  <span className="hud-text text-[9px] text-white/50">Computing confidence...</span>
+                </>
+              ) : analysis.confidence != null ? (
+                <>
+                  <CheckCircle className={`w-4 h-4 ${analysis.confidence > 0.7 ? 'text-green-400' : analysis.confidence > 0.4 ? 'text-dive-orange' : 'text-dive-red'}`} />
+                  <span className="hud-text text-[9px]">Confidence: {Math.round(analysis.confidence * 100)}%</span>
+                </>
+              ) : null}
+            </div>
+
+            {/* Refine input */}
+            {showRefine && (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={refineText}
+                  onChange={(e) => setRefineText(e.target.value)}
+                  placeholder="e.g. There's a wreck near the entry point..."
+                  className="flex-1 px-3 py-2 glass-panel text-xs text-white placeholder-white/30 bg-transparent border-white/10 focus:border-dive-cyan/50 outline-none rounded"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && refineText.trim()) {
+                      onRefine(refineText.trim());
+                      setRefineText('');
+                      setShowRefine(false);
+                      setIsLoading(true);
+                    }
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    if (refineText.trim()) {
+                      onRefine(refineText.trim());
+                      setRefineText('');
+                      setShowRefine(false);
+                      setIsLoading(true);
+                    }
+                  }}
+                  className="px-3 py-2 bg-dive-cyan/20 border border-dive-cyan/50 text-dive-cyan text-xs rounded active:scale-95 transition-all"
+                >
+                  Send
+                </button>
               </div>
             )}
 
+            {/* Action buttons */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  onConfirm();
+                  onClose();
+                }}
+                className="flex-1 py-2.5 bg-dive-cyan/20 border border-dive-cyan/50 text-dive-cyan rounded transition-all active:scale-95 flex items-center justify-center gap-2 hud-text text-xs"
+              >
+                <Check className="w-4 h-4" />
+                Confirm Route
+              </button>
+              <button
+                onClick={() => setShowRefine(!showRefine)}
+                className={`flex-1 py-2.5 glass-panel transition-all active:scale-95 flex items-center justify-center gap-2 hud-text text-xs ${showRefine ? 'border-dive-orange/50 text-dive-orange' : 'hover:border-dive-cyan/30'}`}
+              >
+                <RefreshCw className="w-4 h-4" />
+                Refine
+              </button>
+            </div>
+
             {/* Re-upload button */}
             <button
-              onClick={() => { setPreview(null); }}
-              className="w-full py-2.5 glass-panel hover:border-dive-cyan/30 transition-colors hud-text text-xs"
+              onClick={() => { setPreview(null); setShowRefine(false); setRefineText(''); }}
+              className="w-full py-2 glass-panel hover:border-white/20 transition-colors hud-text text-[10px] text-white/40"
             >
               Upload New Map
             </button>

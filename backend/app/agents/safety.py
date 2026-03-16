@@ -97,12 +97,12 @@ def _check_thresholds(output: AgentOutput) -> AgentOutput:
                 m["ascent_rate_mpm"] = round(ascent_rate, 1)
 
                 if ascent_rate > 18:
-                    alerts.append(f"CRITICAL: Ascending too fast ({ascent_rate:.0f} m/min). Slow down immediately!")
+                    alerts.append(f"Ease up — you're coming up way too fast at {ascent_rate:.0f} meters a minute. Slow it down, let the bubbles lead.")
                 elif ascent_rate > 10:
-                    alerts.append(f"Ascent rate elevated ({ascent_rate:.0f} m/min). Slow your ascent.")
+                    alerts.append(f"Your ascent rate's a bit high at {ascent_rate:.0f} meters a minute. Take it easy on the way up.")
 
                 if descent_rate > 30:
-                    alerts.append(f"CRITICAL: Descending too fast ({descent_rate:.0f} m/min). Equalize and slow down!")
+                    alerts.append(f"You're dropping fast — {descent_rate:.0f} meters a minute. Slow down and equalize.")
         elif len(_depth_history) == 2:
             # Only 2 readings: calculate but don't trigger CRITICAL alerts (not enough data)
             d_prev, t_prev = _depth_history[0]
@@ -116,18 +116,18 @@ def _check_thresholds(output: AgentOutput) -> AgentOutput:
     pressure_bar = bar if bar is not None else (psi / 14.504 if psi else None)
     if pressure_bar is not None:
         if pressure_bar < 35:
-            alerts.append("CRITICAL: Reserve pressure — begin ascent NOW")
+            alerts.append(f"You're down to {int(pressure_bar)} bar — that's reserve. Start heading up now.")
         elif pressure_bar < 50:
-            alerts.append("Turnaround pressure reached — head to exit")
+            alerts.append(f"Air's at {int(pressure_bar)} bar. Time to turn the dive and head back.")
         elif pressure_bar < 70:
-            alerts.append("Monitor air — approaching turnaround pressure")
+            alerts.append(f"Air's getting down to {int(pressure_bar)} bar. Start thinking about your turnaround.")
 
     # ── Depth Checks ──
     if depth is not None:
         if depth > 30:
-            alerts.append("Approaching recreational depth limit (30m/100ft)")
+            alerts.append(f"You're at {depth:.0f} meters — that's pushing the recreational limit. Keep an eye on your NDL.")
         elif depth > 18:
-            alerts.append("Moderate depth — monitor NDL and air consumption")
+            alerts.append(f"Sitting at {depth:.0f} meters. Moderate depth — just keep tabs on your air and NDL.")
 
         # Ambient pressure calculation
         m["ambient_atm"] = round(1 + depth / 10, 2)
@@ -141,9 +141,9 @@ def _check_thresholds(output: AgentOutput) -> AgentOutput:
     # ── Temperature / Hypothermia Checks ──
     if temp_c is not None:
         if temp_c < 10:
-            alerts.append(f"CRITICAL: Water extremely cold ({temp_c}°C). High hypothermia risk.")
+            alerts.append(f"Water's at {temp_c}°C — that's seriously cold. Watch for shivering or numbness, and consider ending the dive.")
         elif temp_c < 20:
-            alerts.append(f"Cool water ({temp_c}°C) — monitor for cold stress symptoms.")
+            alerts.append(f"Water's a bit chilly at {temp_c}°C. Stay aware of how you're feeling.")
 
         # Thermocline detection
         if _last_reading and _last_reading.get("temp_c") is not None:
@@ -154,31 +154,32 @@ def _check_thresholds(output: AgentOutput) -> AgentOutput:
     # ── Oxygen Toxicity Checks ──
     if cns_percent is not None:
         if cns_percent > 100:
-            alerts.append("CRITICAL: CNS oxygen toxicity limit exceeded!")
+            alerts.append(f"Your CNS is over {cns_percent}% — that's past the oxygen toxicity limit. Ascend now and get shallower.")
         elif cns_percent > 80:
-            alerts.append(f"Oxygen toxicity loading high (CNS {cns_percent}%). Consider shallower depth.")
+            alerts.append(f"CNS is at {cns_percent}%. Oxygen loading's getting high — think about moving shallower.")
 
     if po2 is not None:
         if po2 > 1.6:
-            alerts.append(f"CRITICAL: PO2 dangerously high ({po2}). Ascend immediately!")
+            alerts.append(f"PO2 is at {po2} — that's dangerously high. Get shallower right now.")
         elif po2 > 1.4:
-            alerts.append(f"Elevated PO2 ({po2}). Monitor for oxygen toxicity symptoms.")
+            alerts.append(f"PO2's sitting at {po2}. Keep an eye out for any tingling or visual changes.")
 
     # ── NDL (No-Decompression Limit) Checks ──
     if ndl_min is not None:
         if ndl_min <= 0:
-            alerts.append("CRITICAL: No-decompression limit reached — begin ascent now!")
+            alerts.append("Your NDL's hit zero. Time to head up — no more bottom time.")
         elif ndl_min < 5:
-            alerts.append(f"NDL critically low ({ndl_min} min). Begin ascent soon.")
+            alerts.append(f"Only {ndl_min} minutes of NDL left. Start wrapping up the dive.")
         elif ndl_min < 10:
-            alerts.append(f"Approaching no-decompression limit ({ndl_min} min remaining).")
+            alerts.append(f"NDL's down to {ndl_min} minutes. Keep that in mind as you go.")
 
     if alerts:
-        # Pick the most critical alert (CRITICAL > Turnaround > warning)
+        # Pick the most critical alert based on urgency keywords
         def _severity(alert: str) -> int:
-            if "CRITICAL" in alert:
+            a = alert.lower()
+            if any(k in a for k in ("right now", "head up", "heading up now", "way too fast", "hit zero", "past the")):
                 return 3
-            if "Turnaround" in alert or "Reserve" in alert or "limit" in alert.lower() or "begin ascent" in alert.lower():
+            if any(k in a for k in ("turn the dive", "wrapping up", "pushing the", "seriously cold")):
                 return 2
             return 1
 

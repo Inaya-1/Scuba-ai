@@ -1,5 +1,6 @@
 let lastSpoken = '';
 let lastSpokenAt = 0;
+let speaking = false;
 
 async function elevenLabsTTS(text: string, urgent: boolean): Promise<void> {
   const resp = await fetch('/api/tts', {
@@ -11,7 +12,7 @@ async function elevenLabsTTS(text: string, urgent: boolean): Promise<void> {
   const blob = await resp.blob();
   const url = URL.createObjectURL(blob);
   const audio = new Audio(url);
-  audio.addEventListener('ended', () => URL.revokeObjectURL(url));
+  audio.addEventListener('ended', () => { URL.revokeObjectURL(url); speaking = false; });
   await audio.play();
 }
 
@@ -20,19 +21,26 @@ function browserTTS(text: string): void {
   const utter = new SpeechSynthesisUtterance(text);
   utter.rate = 0.95;
   utter.pitch = 1.0;
+  utter.onend = () => { speaking = false; };
   speechSynthesis.speak(utter);
 }
 
-export async function speakSpecies(ttsText: string | undefined, safetyLevel?: string): Promise<void> {
+/**
+ * Scoobi master TTS — speaks any agent's tts_text through ElevenLabs.
+ * Urgent messages (critical safety) interrupt the dedup guard.
+ */
+export async function speakScoobi(ttsText: string | undefined, urgent = false): Promise<void> {
   if (!ttsText) return;
 
-  // Dedup guard: skip if same text spoken in last 10 seconds
+  // Skip if already speaking (unless urgent — urgent interrupts)
+  if (speaking && !urgent) return;
+
+  // Dedup guard: skip if same text spoken in last 10 seconds (urgent bypasses)
   const now = Date.now();
-  if (ttsText === lastSpoken && now - lastSpokenAt < 10_000) return;
+  if (!urgent && ttsText === lastSpoken && now - lastSpokenAt < 10_000) return;
   lastSpoken = ttsText;
   lastSpokenAt = now;
-
-  const urgent = safetyLevel === 'dangerous';
+  speaking = true;
 
   try {
     await elevenLabsTTS(ttsText, urgent);
@@ -40,3 +48,6 @@ export async function speakSpecies(ttsText: string | undefined, safetyLevel?: st
     browserTTS(ttsText);
   }
 }
+
+/** @deprecated Use speakScoobi instead */
+export const speakSpecies = speakScoobi;
