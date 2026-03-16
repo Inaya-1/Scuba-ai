@@ -67,6 +67,7 @@ export class ScubaSocket {
           console.warn("[WS] Backend error:", data.error);
           return;
         }
+        if (data._noop) return;
         this.callbacks?.onResponse(parseResponse(data));
       } catch (err) {
         console.error("[WS] Parse error:", err);

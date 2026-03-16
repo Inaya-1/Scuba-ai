@@ -1,3 +1,4 @@
+export type UIMode = 'marine-biologist' | 'diver';
 export type AgentType = 'safety' | 'bio' | 'nav' | 'manager';
 export type ResponseType = 'info' | 'hazard' | 'species' | 'navigation';
 export type Priority = 'low' | 'medium' | 'high' | 'critical';

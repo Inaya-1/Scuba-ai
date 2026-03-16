@@ -1,37 +1,48 @@
 import React from 'react';
 import { motion } from 'motion/react';
 import { Activity, Shield, Navigation, Fish, AlertTriangle } from 'lucide-react';
-import { AgentResponse } from '../types';
+import { AgentResponse, UIMode } from '../types';
 
 interface ResponseOverlayProps {
   responses: AgentResponse[];
+  mode?: UIMode;
 }
 
-export const ResponseOverlay: React.FC<ResponseOverlayProps> = ({ responses }) => {
+export const ResponseOverlay: React.FC<ResponseOverlayProps> = ({ responses, mode = 'marine-biologist' }) => {
+  const isDiver = mode === 'diver';
+
+  // In diver mode, filter out bio species cards (TTS handles them) but keep hazard/safety/nav
+  const filtered = isDiver
+    ? responses.filter(r => !(r.agent === 'bio' && r.type === 'species'))
+    : responses;
+
   return (
     <div className="absolute top-24 right-6 w-80 space-y-4 pointer-events-none">
-      {responses.map((res, i) => (
+      {filtered.map((res, i) => (
         <motion.div
           key={i}
           initial={{ opacity: 0, x: 20, scale: 0.95 }}
           animate={{ opacity: 1, x: 0, scale: 1 }}
           exit={{ opacity: 0, x: 20, scale: 0.95 }}
           className={`glass-panel p-4 border-l-4 ${
-            res.priority === 'critical' ? 'border-l-dive-red' : 
+            res.priority === 'critical' ? 'border-l-dive-red' :
             res.priority === 'high' ? 'border-l-dive-orange' : 'border-l-dive-cyan'
           }`}
         >
-          <div className="flex items-center gap-2 mb-2">
-            {res.agent === 'safety' && <Shield className="w-4 h-4 text-dive-red" />}
-            {res.agent === 'bio' && <Fish className="w-4 h-4 text-dive-cyan" />}
-            {res.agent === 'nav' && <Navigation className="w-4 h-4 text-dive-orange" />}
-            {res.agent === 'manager' && <Activity className="w-4 h-4 text-white" />}
-            <span className="hud-text">{res.agent} agent</span>
-          </div>
-          <p className="text-sm font-medium leading-relaxed">
+          {/* Simplified header in diver mode */}
+          {!isDiver && (
+            <div className="flex items-center gap-2 mb-2">
+              {res.agent === 'safety' && <Shield className="w-4 h-4 text-dive-red" />}
+              {res.agent === 'bio' && <Fish className="w-4 h-4 text-dive-cyan" />}
+              {res.agent === 'nav' && <Navigation className="w-4 h-4 text-dive-orange" />}
+              {res.agent === 'manager' && <Activity className="w-4 h-4 text-white" />}
+              <span className="hud-text">{res.agent} agent</span>
+            </div>
+          )}
+          <p className={`font-medium leading-relaxed ${isDiver ? 'text-base' : 'text-sm'}`}>
             {res.content}
           </p>
-          {res.type === 'species' && res.metadata && (
+          {!isDiver && res.type === 'species' && res.metadata && (
             <div className="mt-2 space-y-1.5">
               {res.metadata.scientific_name && (
                 <p className="text-[10px] font-mono text-dive-cyan/60 italic">
