@@ -12,7 +12,9 @@ import { HoloMap } from './components/HoloMap';
 import { DiveState, AgentResponse, UIMode } from './types';
 import { scubaSocket } from './services/backendSocket';
 import { geminiLive } from './services/liveApi';
-import { speakScoobi } from './services/ttsService';
+import { AudioCapture } from './services/audioCapture';
+
+const audioCapture = new AudioCapture();
 
 export default function App() {
   const [isStarted, setIsStarted] = useState(false);
@@ -86,17 +88,6 @@ export default function App() {
           priority: priorityNum,
           metadata: res.metadata,
         });
-
-        // Scoobi master TTS — speaks for any agent with tts_text
-        if (res.metadata?.tts_text) {
-          const urgent = res.metadata.alert_level === 'critical'
-            || (res.agent === 'safety' && (res.priority === 'critical' || res.priority === 'high'));
-          speakScoobi(res.metadata.tts_text, urgent);
-        } else if (res.agent === 'bio' && res.type === 'species' && res.metadata) {
-          // Fallback for bio responses without tts_text
-          const tts = `${res.metadata.common_name}. ${res.metadata.safety_advice || ''}`;
-          speakScoobi(tts, false);
-        }
 
         // Always show critical safety alerts as cards regardless of toggle
         const isCritical = res.agent === 'safety' && (res.priority === 'critical' || res.priority === 'high');
@@ -187,8 +178,17 @@ export default function App() {
       onError: (err) => {
         console.error("[App] Live API error:", err);
       },
-      onConnect: () => setLiveConnected(true),
-      onDisconnect: () => setLiveConnected(false),
+      onConnect: () => {
+        setLiveConnected(true);
+        // Start always-on mic capture → stream to Live API
+        audioCapture.start((pcmBase64) => {
+          geminiLive.sendAudio(pcmBase64);
+        }).catch(err => console.error("[App] Mic access failed:", err));
+      },
+      onDisconnect: () => {
+        setLiveConnected(false);
+        audioCapture.stop();
+      },
       onToolCall: (name, _args) => {
         switch (name) {
           case 'toggle_mode':
@@ -213,6 +213,7 @@ export default function App() {
     }, accessCode);
 
     return () => {
+      audioCapture.stop();
       geminiLive.disconnect();
       setLiveConnected(false);
     };
@@ -352,12 +353,14 @@ export default function App() {
   }, []);
 
   const handleAdminInject = useCallback((res: AgentResponse) => {
-    // Scoobi TTS for simulated response
-    if (res.metadata?.tts_text) {
-      const urgent = res.metadata.alert_level === 'critical'
-        || (res.agent === 'safety' && (res.priority === 'critical' || res.priority === 'high'));
-      speakScoobi(res.metadata.tts_text, urgent);
-    }
+    // Send simulated response to Live API for voice narration
+    geminiLive.sendAgentReport({
+      agent: res.agent,
+      type: res.type,
+      content: res.content,
+      priority: res.priority,
+      metadata: res.metadata,
+    });
 
     // Show as card
     setResponses(prev => {
@@ -378,6 +381,7 @@ export default function App() {
   }, []);
 
   const endDive = useCallback(() => {
+    audioCapture.stop();
     scubaSocket.disconnect();
     geminiLive.disconnect();
     setIsStarted(false);

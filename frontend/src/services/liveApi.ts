@@ -1,31 +1,26 @@
-import { GoogleGenAI, Modality, Session, FunctionDeclaration, Type } from "@google/genai";
+import { GoogleGenAI, Modality, Session, FunctionDeclaration } from "@google/genai";
 
 // ── Voice-controllable setting functions ──
 const SETTING_TOOLS: FunctionDeclaration[] = [
   {
     name: "toggle_mode",
     description: "Switch the dive mode between 'marine-biologist' (bio research mode with species cards and detailed analysis) and 'diver' (minimal HUD, safety-focused). Call this when the user asks to switch mode, change mode, go to diver mode, go to bio mode, etc.",
-    parameters: { type: Type.OBJECT, properties: {} },
   },
   {
     name: "toggle_auto_identify",
     description: "Turn automatic fish/species identification on or off. When on, the AI continuously identifies marine life in the camera feed. Call when user says 'turn on/off fish ID', 'stop/start identifying fish', 'auto identify on/off', etc.",
-    parameters: { type: Type.OBJECT, properties: {} },
   },
   {
     name: "toggle_agent_cards",
     description: "Show or hide the on-screen agent response cards (text overlays from safety, bio, and nav agents). Call when user says 'show/hide cards', 'show/hide text', 'toggle cards', etc.",
-    parameters: { type: Type.OBJECT, properties: {} },
   },
   {
     name: "open_map",
     description: "Open the dive map upload interface so the diver can upload or view their dive site map. Call when user says 'open map', 'upload map', 'show map', etc.",
-    parameters: { type: Type.OBJECT, properties: {} },
   },
   {
     name: "identify_now",
     description: "Trigger an immediate fish/species identification of what's currently visible in the camera. Call when user says 'what fish is that', 'identify this', 'what species', 'what am I looking at', etc.",
-    parameters: { type: Type.OBJECT, properties: {} },
   },
 ];
 
@@ -65,8 +60,9 @@ export class GeminiLive {
 
       this.ai = new GoogleGenAI({ apiKey: data.apiKey });
 
+      console.log("[Live] Connecting to Gemini Live API...");
       this.session = await this.ai.live.connect({
-        model: "gemini-2.5-flash-live-001",
+        model: "gemini-2.5-flash-native-audio-preview-12-2025",
         callbacks: {
           onopen: () => {
             console.log("[Live] Session opened");
@@ -86,7 +82,8 @@ export class GeminiLive {
           },
         },
         config: {
-          responseModalities: [Modality.AUDIO, Modality.TEXT],
+          responseModalities: [Modality.AUDIO],
+          outputAudioTranscription: {},
           speechConfig: {
             voiceConfig: {
               prebuiltVoiceConfig: { voiceName: "Zephyr" },
@@ -154,7 +151,15 @@ You are watching a live camera feed AND receiving structured intelligence from b
     }
 
     // Handle server content from the Live API
-    const parts = msg?.serverContent?.modelTurn?.parts;
+    const sc = msg?.serverContent;
+    if (!sc) return;
+
+    // Audio transcription (output text from audio-only model)
+    if (sc.outputTranscription?.text) {
+      this.callbacks?.onTextResponse(sc.outputTranscription.text);
+    }
+
+    const parts = sc.modelTurn?.parts;
     if (!parts) return;
 
     for (const part of parts) {
