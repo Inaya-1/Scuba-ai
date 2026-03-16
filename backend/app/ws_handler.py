@@ -34,7 +34,8 @@ async def route_message(msg_type: str, payload: str, metadata: dict) -> dict | l
         return await handle_gauge_frame(payload, metadata)
 
     if msg_type == "nav_frame":
-        return await handle_nav_frame(payload, metadata)
+        result = await handle_nav_frame(payload, metadata)
+        return result if result else None
 
     if msg_type == "frame":
         tasks = [

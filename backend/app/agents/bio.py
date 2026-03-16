@@ -1,4 +1,5 @@
 import logging
+import time
 from app.agents.base import call_gemini
 from app.prompts.bio import BIO_PROMPT
 from app.models.messages import AgentOutput
@@ -7,6 +8,26 @@ logger = logging.getLogger(__name__)
 
 # Session history of identified species
 _species_log: list[dict] = []
+
+# All species identified this session (names only, for dedup context)
+_identified_names: list[str] = []
+
+
+def _get_recent_species_context() -> str:
+    """Build context of species identified this session so Gemini uses consistent names."""
+    if not _identified_names:
+        return ""
+    # Deduplicate, most recent first
+    unique = list(dict.fromkeys(reversed(_identified_names)))[:15]
+    return (
+        f" Previously identified species this dive: {', '.join(unique)}."
+        " If you see any of these species again, use the EXACT SAME common_name as listed above for consistency."
+    )
+
+
+def _record_species(name: str):
+    """Record a species as identified this session."""
+    _identified_names.append(name)
 
 
 async def handle_identify(payload: str, metadata: dict) -> dict:
@@ -37,6 +58,9 @@ async def handle_identify(payload: str, metadata: dict) -> dict:
             )
         elif output.metadata:
             _species_log.append(output.metadata)
+            cname = output.metadata.get("common_name", "")
+            if cname:
+                _record_species(cname)
 
         return output.model_dump()
     except Exception as e:
@@ -52,11 +76,13 @@ async def handle_identify(payload: str, metadata: dict) -> dict:
 async def handle_bio_frame(payload: str, metadata: dict) -> dict:
     """Passive scan of a frame for notable marine life (background monitoring)."""
     try:
-        result = await call_gemini(
-            BIO_PROMPT,
-            payload,
-            "Scan this underwater scene. If you see any notable, dangerous, or interesting marine life, identify it. If nothing notable, respond with type 'info' and a brief scene note.",
+        recent_ctx = _get_recent_species_context()
+        user_text = (
+            "Scan this underwater scene. If you see any notable, dangerous, or interesting marine life, identify it."
+            " If nothing notable, respond with type 'info' and a brief scene note."
+            f"{recent_ctx}"
         )
+        result = await call_gemini(BIO_PROMPT, payload, user_text)
         output = AgentOutput(**result)
 
         # Low-confidence: don't log or alert
@@ -77,6 +103,10 @@ async def handle_bio_frame(payload: str, metadata: dict) -> dict:
 
         if output.type == "species" and output.metadata:
             _species_log.append(output.metadata)
+            # Record for dedup context on next frame
+            cname = output.metadata.get("common_name", "")
+            if cname:
+                _record_species(cname)
 
         return output.model_dump()
     except Exception as e:

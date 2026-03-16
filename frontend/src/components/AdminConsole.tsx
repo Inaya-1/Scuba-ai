@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, AlertTriangle, Thermometer, Gauge, ArrowUp, Clock, Zap, Play, Fish, Upload, MessageSquare, Map as MapIcon, Microscope, Waves, ChevronDown } from 'lucide-react';
+import { X, AlertTriangle, Thermometer, Gauge, ArrowUp, Clock, Zap, Play, Fish, Upload, MessageSquare, Map as MapIcon, Microscope, Waves, ChevronDown, Navigation, Square } from 'lucide-react';
 import { AgentResponse, UIMode } from '../types';
 
 interface SettingsProps {
@@ -18,6 +18,9 @@ interface SettingsProps {
   onUploadVideo: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onIdentifyNow: () => void;
   demoVideoActive: boolean;
+  onSimulateNav?: () => void;
+  mapActive?: boolean;
+  navSimRunning?: boolean;
 }
 
 interface Metrics {
@@ -71,7 +74,7 @@ export function AdminConsole({
   autoIdentify, onToggleAutoIdentify,
   showAgentCards, onToggleAgentCards,
   onOpenMap, onUploadVideo, onIdentifyNow,
-  demoVideoActive,
+  demoVideoActive, onSimulateNav, mapActive, navSimRunning,
 }: SettingsProps) {
   const [metrics, setMetrics] = useState<Metrics>({
     bar: 180, depth_m: 12, temp_c: 24, ndl_min: 45, ascent_rate_mpm: 0,
@@ -179,6 +182,17 @@ export function AdminConsole({
                   <span className="hud-text text-[9px]">Demo Video</span>
                 </button>
                 <input ref={videoInputRef} type="file" accept="video/*" onChange={onUploadVideo} className="hidden" />
+                {mapActive && onSimulateNav && (
+                  <button
+                    onClick={onSimulateNav}
+                    className={`flex items-center gap-2 p-2.5 glass-panel hover:border-white/20 transition-all active:scale-95 rounded-lg col-span-2 ${navSimRunning ? 'border-dive-orange/50 bg-dive-orange/10' : ''}`}
+                  >
+                    {navSimRunning
+                      ? <><Square className="w-4 h-4 text-dive-orange" /><span className="hud-text text-[9px] text-dive-orange">Stop Nav Sim</span></>
+                      : <><Navigation className="w-4 h-4 text-dive-cyan" /><span className="hud-text text-[9px]">Simulate Navigation</span></>
+                    }
+                  </button>
+                )}
               </div>
             </div>
 

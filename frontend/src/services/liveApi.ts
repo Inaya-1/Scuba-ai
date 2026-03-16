@@ -42,6 +42,10 @@ export class GeminiLive {
   private session: Session | null = null;
   private callbacks: LiveCallbacks | null = null;
   private audioContext: AudioContext | null = null;
+  // Buffer streamed text chunks and emit once per turn
+  private textBuffer = '';
+  private transcriptBuffer = '';
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   get connected(): boolean {
     return this.session !== null;
@@ -94,42 +98,31 @@ export class GeminiLive {
             },
           },
           tools: [{ functionDeclarations: SETTING_TOOLS }],
-          systemInstruction: `You are Scuba.ai, a real-time AI dive buddy. You receive video frames from the diver's camera and audio from their microphone. You also receive structured AGENT REPORTS from backend specialist systems.
+          systemInstruction: `You are Scoobi, the AI dive buddy for Scuba.ai. You receive live video and audio from the diver, plus structured AGENT REPORTS from backend systems.
 
-SILENCE BY DEFAULT:
-- Do NOT narrate what you see in the camera unless the diver asks you to.
-- Do NOT describe the scene, fish, coral, or surroundings unprompted.
-- Do NOT make small talk or filler commentary.
-- Stay SILENT unless one of these conditions is met:
-  1. The diver speaks to you — respond to their question/request
-  2. A CRITICAL safety alert arrives (priority 7+) — speak it immediately
-  3. You just executed a tool — briefly confirm the action
-  4. You detect a pointing gesture — call identify_pointed
+IMPORTANT — OUTPUT RULES:
+- You must NOT produce any audio or text output unless the diver speaks to you directly.
+- Do NOT narrate, describe, or comment on anything you see in the camera.
+- Do NOT repeat or read aloud agent reports. Other systems handle that via separate TTS.
+- Do NOT make filler sounds, greetings, or acknowledgements unprompted.
+- Produce ZERO output unless one of these happens:
+  1. The diver asks you a question or gives a voice command.
+  2. You need to execute a tool — briefly confirm in under 5 words.
 
-WHEN YOU RECEIVE AN AGENT REPORT:
-- Critical safety (priority 7+): speak IMMEDIATELY in 1 sentence.
-- Everything else: absorb silently. Do NOT narrate agent reports unless the diver asks.
+AGENT REPORTS: Absorb all agent reports as context only. NEVER speak them aloud. Another system handles voice alerts.
 
-POINTING GESTURE DETECTION:
-- If you see a hand/finger pointing at something in the video frame, call the identify_pointed tool.
-- Do NOT describe what they're pointing at yourself — let the bio agent handle it.
+POINTING GESTURE: If you see a pointing hand in the video, call identify_pointed. Say nothing yourself.
 
-VOICE COMMANDS — SETTINGS CONTROL:
-You have tools to control the dive interface. When the diver asks to change a setting, USE THE TOOL — do not just talk about it.
+VOICE COMMANDS — use these tools when the diver asks:
 - toggle_mode: Switch between marine-biologist and diver mode
-- toggle_auto_identify: Turn automatic fish identification on/off
+- toggle_auto_identify: Turn auto fish ID on/off
 - toggle_agent_cards: Show/hide text overlay cards
-- open_map: Open the dive map interface
+- open_map: Open the dive map
 - identify_now: Identify what's in the camera
-- identify_pointed: Identify what the diver is pointing at
-After calling a tool, confirm in under 5 words (e.g. "Done." or "Switched to diver mode.").
+- identify_pointed: Identify what diver points at
+After a tool call, confirm in under 5 words (e.g. "Done." or "Switched.").
 
-VOICE BEHAVIOR:
-- Keep responses SHORT (1 sentence max).
-- Calm, clear tone.
-- For hazards: "Warning: [hazard]. [action]."
-
-You are the single voice the diver hears. Prioritize silence and brevity.`,
+VOICE STYLE: 1 sentence max. Calm, clear, concise.`,
         },
       });
     } catch (err) {
@@ -147,7 +140,6 @@ You are the single voice the diver hears. Prioritize silence and brevity.`,
         const result = this.callbacks?.onToolCall?.(fc.name, fc.args || {}) ?? "done";
         responses.push({ id: fc.id, name: fc.name, response: { result } });
       }
-      // Send tool responses back so Gemini can confirm the action
       try {
         this.session?.sendToolResponse({ functionResponses: responses });
       } catch (err) {
@@ -156,33 +148,68 @@ You are the single voice the diver hears. Prioritize silence and brevity.`,
       return;
     }
 
-    // Handle server content from the Live API
     const sc = msg?.serverContent;
     if (!sc) return;
 
-    // Audio transcription (output text from audio-only model)
+    // Accumulate transcription chunks (the text version of audio output)
     if (sc.outputTranscription?.text) {
-      const t = sc.outputTranscription.text.trim().toLowerCase();
-      // Skip silence/empty transcriptions
-      if (t && t !== 'silence' && t !== 'silence.' && t !== '...' && t !== '…') {
-        this.callbacks?.onTextResponse(sc.outputTranscription.text);
-      }
+      this.transcriptBuffer += sc.outputTranscription.text;
+      this.scheduleFlush();
     }
 
+    // Accumulate model turn text chunks + play audio immediately
     const parts = sc.modelTurn?.parts;
-    if (!parts) return;
-
-    for (const part of parts) {
-      if (part.text) {
-        const t = part.text.trim().toLowerCase();
-        if (t && t !== 'silence' && t !== 'silence.' && t !== '...' && t !== '…') {
-          this.callbacks?.onTextResponse(part.text);
+    if (parts) {
+      for (const part of parts) {
+        if (part.text) {
+          this.textBuffer += part.text;
+          this.scheduleFlush();
+        }
+        if (part.inlineData?.mimeType?.startsWith("audio/")) {
+          this.callbacks?.onAudioData(part.inlineData.data);
         }
       }
-      if (part.inlineData?.mimeType?.startsWith("audio/")) {
-        this.callbacks?.onAudioData(part.inlineData.data);
-      }
     }
+
+    // Turn complete — flush immediately
+    if (sc.turnComplete) {
+      this.flushText();
+    }
+  }
+
+  private scheduleFlush() {
+    // Debounce: flush after 800ms of no new chunks (fallback if turnComplete never fires)
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = setTimeout(() => this.flushText(), 800);
+  }
+
+  private flushText() {
+    if (this.flushTimer) { clearTimeout(this.flushTimer); this.flushTimer = null; }
+
+    // Prefer transcript buffer (cleaner text from audio transcription)
+    const text = (this.transcriptBuffer || this.textBuffer).trim();
+    this.textBuffer = '';
+    this.transcriptBuffer = '';
+
+    if (text && !this.isSilenceText(text)) {
+      this.callbacks?.onTextResponse(text);
+    }
+  }
+
+  private isSilenceText(text: string): boolean {
+    const t = text.toLowerCase().trim();
+    if (!t || t === '...' || t === '…') return true;
+    // Filter out any variation of "silence" or self-referential system prompt leaks
+    if (/^silence\.?$/.test(t)) return true;
+    if (t.includes('silence by default')) return true;
+    if (t.includes('remaining silent')) return true;
+    if (t.includes('i\'ll remain silent')) return true;
+    if (t.includes('staying silent')) return true;
+    if (t.includes('i will remain silent')) return true;
+    if (t.includes('no narration')) return true;
+    // Filter very short non-substantive responses
+    if (t.length < 4 && !/\d/.test(t)) return true;
+    return false;
   }
 
   sendFrame(base64: string) {
@@ -243,6 +270,9 @@ You are the single voice the diver hears. Prioritize silence and brevity.`,
     this.session = null;
     this.ai = null;
     this.nextPlayTime = 0;
+    this.textBuffer = '';
+    this.transcriptBuffer = '';
+    if (this.flushTimer) { clearTimeout(this.flushTimer); this.flushTimer = null; }
     this.audioContext?.close().catch(() => {});
     this.audioContext = null;
   }

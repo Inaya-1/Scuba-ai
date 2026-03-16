@@ -108,7 +108,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
           <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500 skew-x-12" />
           <div className="flex items-center gap-2">
             <Play className="w-5 h-5 fill-current" />
-            {verifying ? 'VERIFYING...' : 'INITIALIZE DIVE MODE'}
+            {verifying ? 'VERIFYING...' : 'INITIALIZE DIVE'}
           </div>
         </motion.button>
 
