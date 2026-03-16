@@ -204,6 +204,7 @@ export default function App() {
             setShowMap(true);
             return `Map opened`;
           case 'identify_now':
+          case 'identify_pointed':
             handleIdentify();
             return `Identification triggered`;
           default:
