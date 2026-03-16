@@ -162,7 +162,11 @@ You are the single voice the diver hears. Prioritize silence and brevity.`,
 
     // Audio transcription (output text from audio-only model)
     if (sc.outputTranscription?.text) {
-      this.callbacks?.onTextResponse(sc.outputTranscription.text);
+      const t = sc.outputTranscription.text.trim().toLowerCase();
+      // Skip silence/empty transcriptions
+      if (t && t !== 'silence' && t !== 'silence.' && t !== '...' && t !== '…') {
+        this.callbacks?.onTextResponse(sc.outputTranscription.text);
+      }
     }
 
     const parts = sc.modelTurn?.parts;
@@ -170,7 +174,10 @@ You are the single voice the diver hears. Prioritize silence and brevity.`,
 
     for (const part of parts) {
       if (part.text) {
-        this.callbacks?.onTextResponse(part.text);
+        const t = part.text.trim().toLowerCase();
+        if (t && t !== 'silence' && t !== 'silence.' && t !== '...' && t !== '…') {
+          this.callbacks?.onTextResponse(part.text);
+        }
       }
       if (part.inlineData?.mimeType?.startsWith("audio/")) {
         this.callbacks?.onAudioData(part.inlineData.data);
