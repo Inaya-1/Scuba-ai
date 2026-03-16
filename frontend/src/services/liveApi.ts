@@ -1,4 +1,33 @@
-import { GoogleGenAI, Modality, Session } from "@google/genai";
+import { GoogleGenAI, Modality, Session, FunctionDeclaration, Type } from "@google/genai";
+
+// ── Voice-controllable setting functions ──
+const SETTING_TOOLS: FunctionDeclaration[] = [
+  {
+    name: "toggle_mode",
+    description: "Switch the dive mode between 'marine-biologist' (bio research mode with species cards and detailed analysis) and 'diver' (minimal HUD, safety-focused). Call this when the user asks to switch mode, change mode, go to diver mode, go to bio mode, etc.",
+    parameters: { type: Type.OBJECT, properties: {} },
+  },
+  {
+    name: "toggle_auto_identify",
+    description: "Turn automatic fish/species identification on or off. When on, the AI continuously identifies marine life in the camera feed. Call when user says 'turn on/off fish ID', 'stop/start identifying fish', 'auto identify on/off', etc.",
+    parameters: { type: Type.OBJECT, properties: {} },
+  },
+  {
+    name: "toggle_agent_cards",
+    description: "Show or hide the on-screen agent response cards (text overlays from safety, bio, and nav agents). Call when user says 'show/hide cards', 'show/hide text', 'toggle cards', etc.",
+    parameters: { type: Type.OBJECT, properties: {} },
+  },
+  {
+    name: "open_map",
+    description: "Open the dive map upload interface so the diver can upload or view their dive site map. Call when user says 'open map', 'upload map', 'show map', etc.",
+    parameters: { type: Type.OBJECT, properties: {} },
+  },
+  {
+    name: "identify_now",
+    description: "Trigger an immediate fish/species identification of what's currently visible in the camera. Call when user says 'what fish is that', 'identify this', 'what species', 'what am I looking at', etc.",
+    parameters: { type: Type.OBJECT, properties: {} },
+  },
+];
 
 export type LiveCallbacks = {
   onTextResponse: (text: string) => void;
@@ -6,6 +35,7 @@ export type LiveCallbacks = {
   onError: (err: any) => void;
   onConnect: () => void;
   onDisconnect: () => void;
+  onToolCall?: (name: string, args: Record<string, unknown>) => string;
 };
 
 export class GeminiLive {
@@ -62,6 +92,7 @@ export class GeminiLive {
               prebuiltVoiceConfig: { voiceName: "Zephyr" },
             },
           },
+          tools: [{ functionDeclarations: SETTING_TOOLS }],
           systemInstruction: `You are Scuba.ai, a real-time AI dive buddy. You have two information sources:
 1. Your own visual analysis of the live camera feed
 2. Structured AGENT REPORTS from specialist subsystems (safety, bio, nav) injected as text messages
@@ -72,6 +103,15 @@ WHEN YOU RECEIVE AN AGENT REPORT:
 - For navigation updates, only speak if the diver is off-course or reaching a waypoint.
 - For routine low-priority info (priority 0-2), absorb silently — don't narrate every gauge reading unless it's unusual.
 - NEVER read the JSON literally. Translate it into natural dive buddy speech.
+
+VOICE COMMANDS — SETTINGS CONTROL:
+You have tools to control the dive interface. When the diver asks to change a setting, USE THE APPROPRIATE TOOL — do not just talk about it. Available tools:
+- toggle_mode: Switch between marine-biologist and diver mode
+- toggle_auto_identify: Turn automatic fish identification on/off
+- toggle_agent_cards: Show/hide text overlay cards from agents
+- open_map: Open the dive map interface
+- identify_now: Immediately identify what's in the camera
+After calling a tool, briefly confirm the action (e.g. "Switched to diver mode" or "Fish ID is now off").
 
 VOICE BEHAVIOR:
 - Keep spoken responses SHORT (1-2 sentences max).
@@ -96,6 +136,23 @@ You are watching a live camera feed AND receiving structured intelligence from b
   }
 
   private handleMessage(msg: any) {
+    // Handle tool calls from the Live API (voice-controlled settings)
+    if (msg?.toolCall?.functionCalls) {
+      const responses: Array<{ id: string; name: string; response: { result: string } }> = [];
+      for (const fc of msg.toolCall.functionCalls) {
+        console.log(`[Live] Tool call: ${fc.name}`, fc.args);
+        const result = this.callbacks?.onToolCall?.(fc.name, fc.args || {}) ?? "done";
+        responses.push({ id: fc.id, name: fc.name, response: { result } });
+      }
+      // Send tool responses back so Gemini can confirm the action
+      try {
+        this.session?.sendToolResponse({ functionResponses: responses });
+      } catch (err) {
+        console.error("[Live] Failed to send tool response:", err);
+      }
+      return;
+    }
+
     // Handle server content from the Live API
     const parts = msg?.serverContent?.modelTurn?.parts;
     if (!parts) return;

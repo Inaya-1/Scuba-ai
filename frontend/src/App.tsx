@@ -189,6 +189,27 @@ export default function App() {
       },
       onConnect: () => setLiveConnected(true),
       onDisconnect: () => setLiveConnected(false),
+      onToolCall: (name, _args) => {
+        switch (name) {
+          case 'toggle_mode':
+            toggleMode();
+            return `Mode toggled`;
+          case 'toggle_auto_identify':
+            setAutoIdentify(prev => !prev);
+            return `Auto-identify toggled`;
+          case 'toggle_agent_cards':
+            setShowAgentCards(prev => !prev);
+            return `Agent cards toggled`;
+          case 'open_map':
+            setShowMap(true);
+            return `Map opened`;
+          case 'identify_now':
+            handleIdentify();
+            return `Identification triggered`;
+          default:
+            return `Unknown function: ${name}`;
+        }
+      },
     }, accessCode);
 
     return () => {
