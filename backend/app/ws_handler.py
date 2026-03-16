@@ -62,15 +62,7 @@ async def route_message(msg_type: str, payload: str, metadata: dict) -> dict | l
         if not valid:
             return None
 
-        # Return the highest-priority result to keep the overlay clean
-        valid.sort(key=lambda x: x.get("priority", 0), reverse=True)
-        best = valid[0]
-
-        # If there's a hazard, always surface it regardless of other results
-        hazards = [r for r in valid if r.get("type") == "hazard"]
-        if hazards:
-            best = hazards[0]
-
-        return best
+        # Return all valid results so each agent's response reaches the frontend
+        return valid if len(valid) > 1 else valid[0]
 
     return {"error": f"Unknown message type: {msg_type}"}

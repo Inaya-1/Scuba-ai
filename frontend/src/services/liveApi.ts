@@ -213,9 +213,8 @@ You are the single voice the diver hears. Prioritize silence and brevity.`,
     }`;
 
     try {
-      this.session.sendClientContent({
-        turns: [{ role: "user", parts: [{ text }] }],
-      });
+      // Use sendRealtimeInput (not sendClientContent) to avoid disrupting VAD
+      this.session.sendRealtimeInput({ text });
     } catch (err) {
       console.error("[Live] Failed to send agent report:", err);
     }
@@ -224,9 +223,7 @@ You are the single voice the diver hears. Prioritize silence and brevity.`,
   sendText(text: string) {
     if (!this.session) return;
     try {
-      this.session.sendClientContent({
-        turns: [{ role: "user", parts: [{ text }] }],
-      });
+      this.session.sendRealtimeInput({ text });
     } catch (err) {
       console.error("[Live] Failed to send text:", err);
     }

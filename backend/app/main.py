@@ -224,7 +224,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
             result = await route_message(msg_type, payload, metadata)
             if result is not None:
-                await websocket.send_json(result)
+                if isinstance(result, list):
+                    for r in result:
+                        await websocket.send_json(r)
+                else:
+                    await websocket.send_json(result)
 
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
