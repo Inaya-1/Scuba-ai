@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 from google import genai
 from google.genai.types import GenerateContentConfig, ThinkingConfig
 from app.config import GEMINI_API_KEY
@@ -9,6 +10,9 @@ from app.models.messages import AgentOutput
 logger = logging.getLogger(__name__)
 
 _client = None
+
+# Timeout for each Gemini API call (seconds). Prevents hung threads.
+GEMINI_TIMEOUT_S = 15
 
 
 def get_client() -> genai.Client:
@@ -45,15 +49,42 @@ def _sync_generate(system_prompt: str, image_b64: str, user_text: str) -> str:
     return response.text
 
 
-async def call_gemini(system_prompt: str, image_b64: str, user_text: str) -> dict:
-    """Shared helper: sends an image + text to Gemini Vision and parses the JSON response."""
-    raw = await asyncio.to_thread(_sync_generate, system_prompt, image_b64, user_text)
+def _extract_json(text: str) -> dict:
+    """Robustly extract JSON from Gemini's response, handling markdown fences and extra text."""
+    text = text.strip()
 
-    text = raw.strip()
     # Strip markdown code fences
     if text.startswith("```"):
         text = text.split("\n", 1)[1] if "\n" in text else text[3:]
         if text.endswith("```"):
             text = text[:-3].strip()
 
-    return json.loads(text)
+    # Try direct parse first
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Fallback: find the first {...} block in the response
+    match = re.search(r'\{.*\}', text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
+
+    # Nothing parseable — raise with context
+    raise ValueError(f"No valid JSON in Gemini response: {text[:200]}")
+
+
+async def call_gemini(system_prompt: str, image_b64: str, user_text: str) -> dict:
+    """Shared helper: sends an image + text to Gemini Vision and parses the JSON response."""
+    try:
+        raw = await asyncio.wait_for(
+            asyncio.to_thread(_sync_generate, system_prompt, image_b64, user_text),
+            timeout=GEMINI_TIMEOUT_S,
+        )
+    except asyncio.TimeoutError:
+        raise TimeoutError(f"Gemini API call timed out after {GEMINI_TIMEOUT_S}s")
+
+    return _extract_json(raw)

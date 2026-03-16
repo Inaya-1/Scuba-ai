@@ -59,6 +59,19 @@ async def species_log():
     return {"species": get_species_log()}
 
 
+@app.post("/api/reset-session")
+async def reset_session():
+    """Reset all agent state for a new dive session."""
+    from app.agents.nav import clear_nav_state
+    from app.agents.safety import _depth_history
+    from app.agents.bio import _identified_names, _species_log
+    clear_nav_state()
+    _depth_history.clear()
+    _identified_names.clear()
+    _species_log.clear()
+    return {"status": "ok"}
+
+
 class TTSRequest(BaseModel):
     text: str
     urgent: bool = False

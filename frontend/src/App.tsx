@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Power, Info, Settings } from 'lucide-react';
 import { LandingPage } from './components/LandingPage';
+import { DiveSetup, DiveConfig } from './components/DiveSetup';
 import { CameraFeed, CameraFeedHandle } from './components/CameraFeed';
 import { HUD } from './components/HUD';
 import { ResponseOverlay } from './components/ResponseOverlay';
@@ -13,11 +14,14 @@ import { DiveState, AgentResponse, UIMode } from './types';
 import { scubaSocket } from './services/backendSocket';
 import { geminiLive } from './services/liveApi';
 import { AudioCapture } from './services/audioCapture';
+import { speakScoobi, isSpeciesRecentlySeen, markSpeciesSeen, computeFrameHash, setCurrentFrameHash } from './services/ttsService';
 
 const audioCapture = new AudioCapture();
 
+type AppPhase = 'login' | 'setup' | 'diving';
+
 export default function App() {
-  const [isStarted, setIsStarted] = useState(false);
+  const [phase, setPhase] = useState<AppPhase>('login');
   const [accessCode, setAccessCode] = useState('');
   const [backendConnected, setBackendConnected] = useState(false);
   const [liveConnected, setLiveConnected] = useState(false);
@@ -60,9 +64,12 @@ export default function App() {
   // Guard: only accept one map analysis per upload/refine cycle
   const hasMapAnalysis = useRef(false);
 
+  const uiModeRef = useRef(uiMode);
+
   // Keep refs in sync with state for use inside WS callback closure
   useEffect(() => { showAgentCardsRef.current = showAgentCards; }, [showAgentCards]);
   useEffect(() => { autoIdentifyRef.current = autoIdentify; }, [autoIdentify]);
+  useEffect(() => { uiModeRef.current = uiMode; }, [uiMode]);
 
   // Clear agent cards when toggle is turned off
   useEffect(() => {
@@ -73,50 +80,52 @@ export default function App() {
 
   // ── Backend WebSocket: structured analysis + map uploads ──
   useEffect(() => {
-    if (!isStarted) return;
+    if (phase !== 'diving') return;
 
     scubaSocket.connect({
       onResponse: (res) => {
-        // Forward all agent responses to Live API as context for unified narration
-        const priorityNum = res.priority === 'critical' ? 9
-          : res.priority === 'high' ? 6
-          : res.priority === 'medium' ? 3 : 1;
-        geminiLive.sendAgentReport({
-          agent: res.agent,
-          type: res.type,
-          content: res.content,
-          priority: priorityNum,
-          metadata: res.metadata,
-        });
+        // ── Scoobi TTS ──
+        const isBioSpecies = res.agent === 'bio' && res.type === 'species';
+        const speciesName = isBioSpecies ? res.metadata?.common_name : undefined;
 
-        // Always show critical safety alerts as cards regardless of toggle
-        const isCritical = res.agent === 'safety' && (res.priority === 'critical' || res.priority === 'high');
+        if (isBioSpecies && speciesName) {
+          // Species dedup: skip entirely if this species was seen in last 60s
+          if (!isSpeciesRecentlySeen(speciesName)) {
+            markSpeciesSeen(speciesName);
+            const tts = res.metadata?.tts_text || `${speciesName}. ${res.metadata?.safety_advice || ''}`;
+            speakScoobi(tts, false);
 
-        if (showAgentCardsRef.current || isCritical) {
-          setResponses(prev => {
-            if (res.agent === 'safety') {
-              const withoutSafety = prev.filter(r => r.agent !== 'safety');
-              return [res, ...withoutSafety].slice(0, 3);
+            // Show card in marine-biologist mode only
+            if (uiModeRef.current === 'marine-biologist') {
+              setResponses(prev => {
+                const withoutBio = prev.filter(r => r.agent !== 'bio');
+                return [res, ...withoutBio].slice(0, 3);
+              });
             }
-            if (res.agent === 'nav') {
-              const withoutNav = prev.filter(r => r.agent !== 'nav');
-              return [res, ...withoutNav].slice(0, 3);
-            }
-            if (res.agent === 'bio') {
-              const withoutBio = prev.filter(r => r.agent !== 'bio');
-              return [res, ...withoutBio].slice(0, 3);
-            }
-            return [res, ...prev].slice(0, 3);
-          });
+          }
+        } else if (res.metadata?.tts_text) {
+          // Non-bio agent TTS (safety, nav)
+          const urgent = res.metadata.alert_level === 'critical'
+            || (res.agent === 'safety' && (res.priority === 'critical' || res.priority === 'high'));
+          speakScoobi(res.metadata.tts_text, urgent);
         }
 
-        // Capture nav map analysis — only from explicit map_upload/map_refine responses (tagged by backend)
+        // ── UI Cards — critical safety alerts always shown ──
+        const isCriticalSafety = res.agent === 'safety' && (res.priority === 'critical' || res.priority === 'high');
+        if (isCriticalSafety) {
+          setResponses(prev => {
+            const withoutSafety = prev.filter(r => r.agent !== 'safety');
+            return [res, ...withoutSafety].slice(0, 3);
+          });
+        }
+        // Nav: NO cards — only update the route tracker + TTS handles off-route warnings
+
+        // ── Nav data updates (route tracker, map analysis) ──
         const source = res.metadata?._source;
         if (res.agent === 'nav' && res.metadata?.route_steps && (source === 'map_upload' || source === 'map_refine')) {
           setMapAnalysis(res.metadata as typeof mapAnalysis);
           setMapError(null);
         }
-        // Capture nav distance data from visual odometry
         if (res.agent === 'nav' && res.metadata?.total_distance_m != null) {
           setNavDistance({
             total: res.metadata.total_distance_m,
@@ -124,15 +133,15 @@ export default function App() {
             stepIndex: res.metadata.current_step_index ?? 0,
           });
         }
-        // Capture nav errors
         if (res.agent === 'nav' && res.content && !res.metadata?.landmarks) {
-          if (res.content.toLowerCase().includes('could not') || res.content.toLowerCase().includes('unavailable') || res.content.toLowerCase().includes('error')) {
+          if (res.content.toLowerCase().includes('could not') || res.content.toLowerCase().includes('error')) {
             setMapError(res.content);
           }
         }
 
+        // ── HUD state updates from gauge data ──
         if (res.metadata) {
-          const m = res.metadata!;
+          const m = res.metadata;
           const hasGauge = m.depth_m != null || m.depth_ft != null || m.psi != null || m.bar != null;
           if (hasGauge) hasRealGaugeData.current = true;
 
@@ -156,21 +165,24 @@ export default function App() {
       scubaSocket.disconnect();
       setBackendConnected(false);
     };
-  }, [isStarted]);
+  }, [phase]);
 
   // ── Gemini Live API: real-time audio/video stream ──
   useEffect(() => {
-    if (!isStarted) return;
+    if (phase !== 'diving') return;
 
     geminiLive.connect({
       onTextResponse: (text) => {
-        setResponses(prev => [{
-          agent: 'manager',
-          type: 'info',
-          content: text,
-          priority: 'medium',
-          _ts: Date.now(),
-        }, ...prev].slice(0, 3));
+        setResponses(prev => {
+          const withoutManager = prev.filter(r => r.agent !== 'manager');
+          return [{
+            agent: 'manager',
+            type: 'info',
+            content: text,
+            priority: 'medium',
+            _ts: Date.now(),
+          }, ...withoutManager].slice(0, 3);
+        });
       },
       onAudioData: (pcmBase64) => {
         geminiLive.playAudioChunk(pcmBase64);
@@ -218,7 +230,7 @@ export default function App() {
       geminiLive.disconnect();
       setLiveConnected(false);
     };
-  }, [isStarted, accessCode]);
+  }, [phase, accessCode]);
 
   // ── Auto-dismiss response cards after 6 seconds ──
   useEffect(() => {
@@ -235,7 +247,7 @@ export default function App() {
 
   // ── Simulate dive metrics (stop depth/air drift once real gauge data arrives) ──
   useEffect(() => {
-    if (!isStarted) return;
+    if (phase !== 'diving') return;
 
     const interval = setInterval(() => {
       setDiveState(prev => ({
@@ -249,11 +261,11 @@ export default function App() {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [isStarted]);
+  }, [phase]);
 
   // ── Device compass heading ──
   useEffect(() => {
-    if (!isStarted) return;
+    if (phase !== 'diving') return;
 
     const handleOrientation = (e: DeviceOrientationEvent) => {
       const heading = (e as any).webkitCompassHeading ?? e.alpha ?? 0;
@@ -286,11 +298,11 @@ export default function App() {
     }
 
     return () => window.removeEventListener('deviceorientation', handleOrientation);
-  }, [isStarted]);
+  }, [phase]);
 
   // ── Device motion for odometry (accelerometer) ──
   useEffect(() => {
-    if (!isStarted) return;
+    if (phase !== 'diving') return;
 
     const handleMotion = (e: DeviceMotionEvent) => {
       const a = e.acceleration;
@@ -301,7 +313,7 @@ export default function App() {
 
     window.addEventListener('devicemotion', handleMotion);
     return () => window.removeEventListener('devicemotion', handleMotion);
-  }, [isStarted]);
+  }, [phase]);
 
   // ── Frame handler: send to both backend and Live API ──
   const frameCountRef = useRef(0);
@@ -313,8 +325,11 @@ export default function App() {
     // Every frame goes to Live API for real-time awareness (every 2s from CameraFeed)
     geminiLive.sendFrame(base64);
 
-    // Every 3rd frame (6s) goes to backend for structured JSON analysis
-    if (frameCountRef.current % 3 === 0) {
+    // Compute frame hash every frame for bio dedup scene-change detection (async, ~2ms)
+    computeFrameHash(base64).then(setCurrentFrameHash);
+
+    // Every 2nd frame (4s) goes to backend for structured JSON analysis
+    if (frameCountRef.current % 2 === 0) {
       scubaSocket.sendFrame(base64, headingRef.current, accelRef.current, autoIdentifyRef.current);
     }
   }, []);
@@ -353,21 +368,95 @@ export default function App() {
     });
   }, []);
 
-  const handleAdminInject = useCallback((res: AgentResponse) => {
-    // Send simulated response to Live API for voice narration
-    geminiLive.sendAgentReport({
-      agent: res.agent,
-      type: res.type,
-      content: res.content,
-      priority: res.priority,
-      metadata: res.metadata,
-    });
+  // ── Nav simulation: moves diver along route with TTS callouts ──
+  const navSimInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const navSimRunning = useRef(false);
 
-    // Show as card
-    setResponses(prev => {
-      const withoutSafety = prev.filter(r => r.agent !== 'safety');
-      return [res, ...withoutSafety].slice(0, 3);
-    });
+  const headingToCardinal = (h: number): string => {
+    const dirs = ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest'];
+    return dirs[Math.round(h / 45) % 8];
+  };
+
+  const stopNavSim = useCallback(() => {
+    if (navSimInterval.current) clearInterval(navSimInterval.current);
+    navSimInterval.current = null;
+    navSimRunning.current = false;
+  }, []);
+
+  const startNavSim = useCallback(() => {
+    if (!mapAnalysis?.route_steps?.length) return;
+    if (navSimRunning.current) { stopNavSim(); return; } // toggle off
+
+    navSimRunning.current = true;
+    // Reset to start
+    setNavDistance({ total: 0, step: 0, stepIndex: 0 });
+    const steps = mapAnalysis.route_steps;
+
+    speakScoobi(`Starting navigation. Head ${headingToCardinal(steps[0].heading)}, heading ${steps[0].heading} degrees.`, false);
+
+    let currentStep = 0;
+    let stepDist = 0;
+    let totalDist = 0;
+    let tickCount = 0;
+
+    navSimInterval.current = setInterval(() => {
+      if (currentStep >= steps.length) { stopNavSim(); return; }
+
+      const step = steps[currentStep];
+      const legDist = step.distance_m || 25;
+      const increment = legDist / 8; // ~8 ticks per leg (~16s per leg at 2s ticks)
+      stepDist += increment;
+      totalDist += increment;
+      tickCount++;
+
+      // Simulate off-course correction at tick 3 of each leg (before waypoint)
+      if (tickCount % 8 === 3 && currentStep < steps.length - 1) {
+        const drift = Math.random() > 0.5 ? 15 : -15;
+        const correction = drift > 0 ? 'right' : 'left';
+        speakScoobi(`You're drifting a bit. Correct about ${Math.abs(drift)} degrees to the ${correction}.`, false);
+      }
+
+      if (stepDist >= legDist) {
+        // Arrived at next waypoint
+        currentStep++;
+        stepDist = 0;
+
+        if (currentStep >= steps.length) {
+          // Reached the end — snap marker to final waypoint and stop
+          const lastIdx = steps.length - 1;
+          const lastLeg = steps[lastIdx].distance_m || 25;
+          setNavDistance({ total: Math.round(totalDist), step: lastLeg, stepIndex: lastIdx });
+          speakScoobi("You've reached the exit point. Nice dive!", false);
+          stopNavSim();
+          return;
+        }
+
+        const next = steps[currentStep];
+        const prev = steps[currentStep - 1];
+        const turnDelta = ((next.heading - prev.heading + 540) % 360) - 180;
+        const turnDir = turnDelta > 0 ? 'right' : 'left';
+
+        speakScoobi(
+          `Waypoint reached. Turn ${Math.abs(Math.round(turnDelta))} degrees ${turnDir} to heading ${next.heading}, ${headingToCardinal(next.heading)}.`,
+          false,
+        );
+
+        // Update compass heading to match simulated route
+        headingRef.current = next.heading;
+        setDiveState(prev => ({ ...prev, heading: next.heading }));
+      }
+
+      setNavDistance({ total: Math.round(totalDist), step: Math.round(stepDist), stepIndex: currentStep });
+    }, 2000);
+  }, [mapAnalysis, stopNavSim]);
+
+  const handleAdminInject = useCallback((res: AgentResponse) => {
+    // TTS only — no UI cards for simulation
+    if (res.metadata?.tts_text) {
+      const urgent = res.metadata.alert_level === 'critical'
+        || (res.priority === 'critical' || res.priority === 'high');
+      speakScoobi(res.metadata.tts_text, urgent);
+    }
 
     // Update HUD dive state from simulated metrics
     if (res.metadata) {
@@ -382,10 +471,11 @@ export default function App() {
   }, []);
 
   const endDive = useCallback(() => {
+    stopNavSim();
     audioCapture.stop();
     scubaSocket.disconnect();
     geminiLive.disconnect();
-    setIsStarted(false);
+    setPhase('login');
     setBackendConnected(false);
     setLiveConnected(false);
     setResponses([]);
@@ -411,12 +501,40 @@ export default function App() {
   return (
     <div className="relative w-full h-screen bg-black overflow-hidden select-none">
       <AnimatePresence>
-        {!isStarted && <LandingPage onStart={(code) => { setAccessCode(code); setIsStarted(true); }} />}
+        {phase === 'login' && (
+          <LandingPage onStart={(code) => {
+            setAccessCode(code);
+            // Connect backend WebSocket early for map analysis during setup
+            scubaSocket.connect({
+              onResponse: () => {},
+              onConnect: () => setBackendConnected(true),
+              onDisconnect: () => setBackendConnected(false),
+              onError: () => {},
+            });
+            setPhase('setup');
+          }} />
+        )}
       </AnimatePresence>
 
-      {isStarted && (
+      {phase === 'setup' && (
+        <DiveSetup
+          backendConnected={backendConnected}
+          onStartDive={(config: DiveConfig) => {
+            // Reset backend agent state for fresh dive
+            fetch('/api/reset-session', { method: 'POST' }).catch(() => {});
+            setUiMode(config.uiMode);
+            if (config.demoVideoUrl) setDemoVideo(config.demoVideoUrl);
+            if (config.mapAnalysis) setMapAnalysis(config.mapAnalysis);
+            // Disconnect the setup websocket — dive phase will reconnect
+            scubaSocket.disconnect();
+            setPhase('diving');
+          }}
+        />
+      )}
+
+      {phase === 'diving' && (
         <>
-          <CameraFeed ref={cameraRef} onFrame={handleFrame} isStreaming={isStarted} demoVideoUrl={demoVideo} />
+          <CameraFeed ref={cameraRef} onFrame={handleFrame} isStreaming={phase === 'diving'} demoVideoUrl={demoVideo} />
           <HUD state={diveState} compassAvailable={compassAvailable} mode={uiMode} />
           <ResponseOverlay responses={responses} mode={uiMode} />
 
@@ -520,6 +638,9 @@ export default function App() {
             onUploadVideo={handleDemoUpload}
             onIdentifyNow={handleIdentify}
             demoVideoActive={!!demoVideo}
+            onSimulateNav={startNavSim}
+            mapActive={!!mapAnalysis?.route_steps?.length}
+            navSimRunning={navSimRunning.current}
           />
 
           {/* Status Indicators (hidden in diver mode) */}

@@ -180,14 +180,22 @@ async def handle_nav_frame(payload: str, metadata: dict) -> dict:
         return output.model_dump()
     except Exception as e:
         logger.error(f"NavAgent frame error: {e}")
-        return AgentOutput(
-            agent="nav",
-            type="navigation",
-            content=f"Navigation unavailable: {str(e)[:100]}",
-            priority=0,
-        ).model_dump()
+        # Silently drop frame errors — don't surface parse failures to the user
+        return None
 
 
 def get_cached_map() -> dict | None:
     """Return the cached map data for other agents or the frontend."""
     return _cached_map
+
+
+def clear_nav_state():
+    """Reset all nav state — call when starting a new dive session."""
+    global _cached_map, _cached_map_image, _current_step_index, _total_distance_m, _step_distance_m, _last_frame_time, _prev_landmarks_seen
+    _cached_map = None
+    _cached_map_image = None
+    _current_step_index = 0
+    _total_distance_m = 0.0
+    _step_distance_m = 0.0
+    _last_frame_time = None
+    _prev_landmarks_seen = []
