@@ -95,12 +95,12 @@ export class ScubaSocket {
   }
 
   /** Send a camera frame for multi-agent analysis (safety + bio + nav) */
-  sendFrame(base64: string, heading?: number, accel?: number) {
+  sendFrame(base64: string, heading?: number, accel?: number, autoBio?: boolean) {
     if (!this.connected) return;
     this.ws!.send(JSON.stringify({
       type: "frame",
       payload: base64,
-      metadata: { timestamp: Date.now(), heading, accel },
+      metadata: { timestamp: Date.now(), heading, accel, auto_bio: autoBio ?? false },
     }));
   }
 

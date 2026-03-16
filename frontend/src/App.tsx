@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Mic, Map as MapIcon, Power, Info, Fish, Upload, Microscope, Waves, MessageSquare, Settings } from 'lucide-react';
+import { Power, Info, Settings } from 'lucide-react';
 import { LandingPage } from './components/LandingPage';
 import { CameraFeed, CameraFeedHandle } from './components/CameraFeed';
 import { HUD } from './components/HUD';
@@ -12,10 +12,7 @@ import { HoloMap } from './components/HoloMap';
 import { DiveState, AgentResponse, UIMode } from './types';
 import { scubaSocket } from './services/backendSocket';
 import { geminiLive } from './services/liveApi';
-import { AudioCapture } from './services/audioCapture';
 import { speakScoobi } from './services/ttsService';
-
-const audioCapture = new AudioCapture();
 
 export default function App() {
   const [isStarted, setIsStarted] = useState(false);
@@ -38,6 +35,8 @@ export default function App() {
   const [showMap, setShowMap] = useState(false);
   const [showAgentCards, setShowAgentCards] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
+  const [autoIdentify, setAutoIdentify] = useState(true);
+  const autoIdentifyRef = useRef(true);
   const showAgentCardsRef = useRef(false);
   const [demoVideo, setDemoVideo] = useState<string | null>(null);
   const [mapAnalysis, setMapAnalysis] = useState<{
@@ -51,18 +50,17 @@ export default function App() {
   const [mapError, setMapError] = useState<string | null>(null);
   const [navDistance, setNavDistance] = useState<{ total: number; step: number; stepIndex: number }>({ total: 0, step: 0, stepIndex: 0 });
   const mapLockedRef = useRef(false);
-  const isListeningRef = useRef(false);
   const headingRef = useRef(245);
   const accelRef = useRef(0);
-  const demoInputRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<CameraFeedHandle>(null);
   // Once the backend sends real gauge data, stop overwriting with simulation
   const hasRealGaugeData = useRef(false);
   // Guard: only accept one map analysis per upload/refine cycle
   const hasMapAnalysis = useRef(false);
 
-  // Keep ref in sync with state for use inside WS callback closure
+  // Keep refs in sync with state for use inside WS callback closure
   useEffect(() => { showAgentCardsRef.current = showAgentCards; }, [showAgentCards]);
+  useEffect(() => { autoIdentifyRef.current = autoIdentify; }, [autoIdentify]);
 
   // Clear agent cards when toggle is turned off
   useEffect(() => {
@@ -294,7 +292,7 @@ export default function App() {
 
     // Every 3rd frame (6s) goes to backend for structured JSON analysis
     if (frameCountRef.current % 3 === 0) {
-      scubaSocket.sendFrame(base64, headingRef.current, accelRef.current);
+      scubaSocket.sendFrame(base64, headingRef.current, accelRef.current, autoIdentifyRef.current);
     }
   }, []);
 
@@ -321,29 +319,6 @@ export default function App() {
     }, ...prev].slice(0, 3));
 
     scubaSocket.sendIdentify(freshFrame, "What is this?");
-  }, []);
-
-  // ── Push-to-talk: capture mic audio and stream to Live API ──
-  const startListening = useCallback(async () => {
-    if (isListeningRef.current) return;
-    isListeningRef.current = true;
-    setDiveState(prev => ({ ...prev, isListening: true }));
-
-    try {
-      await audioCapture.start((pcmBase64) => {
-        geminiLive.sendAudio(pcmBase64);
-      });
-    } catch (err) {
-      console.error("Mic access failed:", err);
-      isListeningRef.current = false;
-      setDiveState(prev => ({ ...prev, isListening: false }));
-    }
-  }, []);
-
-  const stopListening = useCallback(() => {
-    isListeningRef.current = false;
-    setDiveState(prev => ({ ...prev, isListening: false }));
-    audioCapture.stop();
   }, []);
 
   const toggleMode = useCallback(() => {
@@ -382,7 +357,6 @@ export default function App() {
   }, []);
 
   const endDive = useCallback(() => {
-    audioCapture.stop();
     scubaSocket.disconnect();
     geminiLive.disconnect();
     setIsStarted(false);
@@ -391,6 +365,7 @@ export default function App() {
     setResponses([]);
     setShowMap(false);
     setShowAgentCards(false);
+    setAutoIdentify(true);
     setShowAdmin(false);
     setDemoVideo(null);
     setMapAnalysis(null);
@@ -449,67 +424,9 @@ export default function App() {
           {/* Interaction Controls */}
           <div className="absolute bottom-24 left-1/2 -translate-x-1/2 flex items-center gap-6 pointer-events-auto">
             <button
-              onClick={toggleMode}
-              className={`p-4 rounded-full glass-panel transition-all active:scale-90 ${uiMode === 'diver' ? 'text-dive-cyan border-dive-cyan/50' : 'text-white/60'}`}
-              title={uiMode === 'diver' ? 'Switch to Bio Mode' : 'Switch to Diver Mode'}
-            >
-              {uiMode === 'diver' ? <Waves className="w-6 h-6" /> : <Microscope className="w-6 h-6" />}
-            </button>
-
-            <button
-              onClick={() => setShowMap(!showMap)}
-              className={`p-4 rounded-full glass-panel transition-all active:scale-90 ${showMap ? 'text-dive-cyan border-dive-cyan/50' : 'text-white/60'}`}
-            >
-              <MapIcon className="w-6 h-6" />
-            </button>
-
-            <button
-              onClick={handleIdentify}
-              className="p-4 rounded-full bg-dive-cyan/20 border border-dive-cyan/50 text-dive-cyan active:scale-90 active:bg-dive-cyan/40 transition-all shadow-[0_0_15px_rgba(0,242,255,0.2)]"
-            >
-              <Fish className="w-6 h-6" />
-            </button>
-
-            <button
-              onMouseDown={startListening}
-              onMouseUp={stopListening}
-              onTouchStart={startListening}
-              onTouchEnd={stopListening}
-              className={`p-8 rounded-full shadow-2xl transition-all active:scale-95 ${
-                diveState.isListening
-                  ? 'bg-dive-cyan text-dive-bg shadow-[0_0_40px_rgba(0,242,255,0.6)]'
-                  : 'glass-panel text-white/60'
-              }`}
-            >
-              <Mic className={`w-8 h-8 ${diveState.isListening ? 'animate-pulse' : ''}`} />
-            </button>
-
-            <button
-              onClick={() => demoInputRef.current?.click()}
-              className={`p-4 rounded-full glass-panel transition-all active:scale-90 ${demoVideo ? 'text-dive-cyan border-dive-cyan/50' : 'text-white/60'}`}
-            >
-              <Upload className="w-6 h-6" />
-            </button>
-            <input
-              ref={demoInputRef}
-              type="file"
-              accept="video/*"
-              onChange={handleDemoUpload}
-              className="hidden"
-            />
-
-            <button
-              onClick={() => setShowAgentCards(!showAgentCards)}
-              className={`p-4 rounded-full glass-panel transition-all active:scale-90 ${showAgentCards ? 'text-dive-cyan border-dive-cyan/50' : 'text-white/60'}`}
-              title={showAgentCards ? 'Hide agent cards' : 'Show agent cards'}
-            >
-              <MessageSquare className="w-6 h-6" />
-            </button>
-
-            <button
               onClick={() => setShowAdmin(!showAdmin)}
               className={`p-4 rounded-full glass-panel transition-all active:scale-90 ${showAdmin ? 'text-dive-cyan border-dive-cyan/50' : 'text-white/60'}`}
-              title="Admin Console"
+              title="Settings"
             >
               <Settings className="w-6 h-6" />
             </button>
@@ -562,11 +479,21 @@ export default function App() {
             />
           )}
 
-          {/* Admin Console */}
+          {/* Settings Panel */}
           <AdminConsole
             open={showAdmin}
             onClose={() => setShowAdmin(false)}
             onInject={handleAdminInject}
+            uiMode={uiMode}
+            onToggleMode={toggleMode}
+            autoIdentify={autoIdentify}
+            onToggleAutoIdentify={() => setAutoIdentify(prev => !prev)}
+            showAgentCards={showAgentCards}
+            onToggleAgentCards={() => setShowAgentCards(prev => !prev)}
+            onOpenMap={() => setShowMap(true)}
+            onUploadVideo={handleDemoUpload}
+            onIdentifyNow={handleIdentify}
+            demoVideoActive={!!demoVideo}
           />
 
           {/* Status Indicators (hidden in diver mode) */}

@@ -37,9 +37,12 @@ async def route_message(msg_type: str, payload: str, metadata: dict) -> dict | l
         return await handle_nav_frame(payload, metadata)
 
     if msg_type == "frame":
-        # Safety agent disabled on background frames to avoid quota/noise issues.
-        # Use explicit "gauge_read" message type for on-demand gauge reading.
-        tasks = []
+        tasks = [
+            handle_gauge_frame(payload, metadata),
+        ]
+        # Auto bio identification when enabled by frontend
+        if metadata.get("auto_bio"):
+            tasks.append(handle_bio_frame(payload, metadata))
         if get_cached_map() is not None:
             tasks.append(handle_nav_frame(payload, metadata))
 
@@ -54,7 +57,13 @@ async def route_message(msg_type: str, payload: str, metadata: dict) -> dict | l
                 valid.append(r)
 
         if not valid:
-            return {"_noop": True}
+            return {
+                "agent": "manager",
+                "type": "info",
+                "content": "Analysis unavailable.",
+                "priority": 0,
+                "metadata": {},
+            }
 
         # Return the highest-priority result to keep the overlay clean
         valid.sort(key=lambda x: x.get("priority", 0), reverse=True)
