@@ -18,7 +18,7 @@ Scuba.ai turns any waterproof phone or dive housing into an intelligent dive com
 
 ### Demo
 
-> 🎬 **[Watch the demo video](demo.mov)**
+> 🎬 **[Watch the demo video](https://www.youtube.com/watch?v=QBh5830G_LY)**
 
 ---
 
