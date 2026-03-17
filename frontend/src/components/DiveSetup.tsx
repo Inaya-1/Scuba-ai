@@ -1,10 +1,11 @@
-import React, { useState, useRef, ChangeEvent } from 'react';
-import { motion } from 'motion/react';
+import React, { useState, useRef, useCallback, ChangeEvent } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   Waves, Microscope, Map as MapIcon, Upload, Camera, Play,
-  Navigation, CheckCircle, AlertTriangle, RefreshCw, Check, Loader2, MapPin, X
+  Navigation, CheckCircle, AlertTriangle, RefreshCw, Check, Loader2, MapPin, X, Mic, MicOff
 } from 'lucide-react';
 import { UIMode } from '../types';
+import { useVoiceCommands } from '../hooks/useVoiceCommands';
 
 interface RouteStep {
   heading: number;
@@ -56,6 +57,15 @@ export function DiveSetup({ onStartDive, backendConnected }: DiveSetupProps) {
   const videoInputRef = useRef<HTMLInputElement>(null);
   const mapFileRef = useRef<HTMLInputElement>(null);
   const mapCaptureRef = useRef<HTMLInputElement>(null);
+
+  // Voice commands
+  const voice = useVoiceCommands({
+    onUploadMap: useCallback(() => mapFileRef.current?.click(), []),
+    onSetDiverMode: useCallback(() => setUiMode('diver'), []),
+    onSetMarineMode: useCallback(() => setUiMode('marine-biologist'), []),
+    onUploadVideo: useCallback(() => videoInputRef.current?.click(), []),
+    onStartDive: useCallback(() => onStartDive({ uiMode, demoVideoUrl: demoVideo, mapAnalysis }), [uiMode, demoVideo, mapAnalysis, onStartDive]),
+  });
 
   const handleVideoUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -159,6 +169,44 @@ export function DiveSetup({ onStartDive, backendConnected }: DiveSetupProps) {
           <div className={`w-2 h-2 rounded-full ${backendConnected ? 'bg-green-400 animate-pulse' : 'bg-dive-red'}`} />
           <span className="hud-text text-[8px]">{backendConnected ? 'BACKEND CONNECTED' : 'CONNECTING...'}</span>
         </div>
+
+        {/* Voice Command Button */}
+        {voice.isSupported && (
+          <div className="flex flex-col items-center gap-2">
+            <button
+              onClick={voice.toggleListening}
+              className={`relative p-4 rounded-full transition-all active:scale-90 ${
+                voice.listening
+                  ? 'bg-dive-cyan/20 border-2 border-dive-cyan shadow-[0_0_25px_rgba(0,242,255,0.4)]'
+                  : 'glass-panel hover:border-white/20'
+              }`}
+            >
+              {voice.listening ? (
+                <Mic className="w-6 h-6 text-dive-cyan animate-pulse" />
+              ) : (
+                <MicOff className="w-6 h-6 text-white/40" />
+              )}
+              {voice.listening && (
+                <span className="absolute -top-1 -right-1 w-3 h-3 bg-dive-cyan rounded-full animate-ping" />
+              )}
+            </button>
+            <span className="hud-text text-[8px] text-white/40">
+              {voice.listening ? 'LISTENING...' : 'TAP TO TALK TO SCOOBI'}
+            </span>
+            <AnimatePresence>
+              {voice.transcript && (
+                <motion.div
+                  initial={{ opacity: 0, y: -5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  className="px-4 py-2 glass-panel rounded-lg max-w-xs text-center"
+                >
+                  <p className="text-[10px] text-white/70 italic">"{voice.transcript}"</p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
 
         {/* 1. Dive Mode Selection */}
         <div className="glass-panel p-4 rounded-xl space-y-3">
