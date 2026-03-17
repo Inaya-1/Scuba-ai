@@ -87,31 +87,38 @@ function recordText(text: string) {
 
 // ── ElevenLabs TTS ──
 async function elevenLabsTTS(text: string, urgent: boolean): Promise<void> {
+  console.log('[TTS] ElevenLabs request:', text.slice(0, 60) + (text.length > 60 ? '...' : ''));
   const resp = await fetch('/api/tts', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text, urgent }),
   });
-  if (!resp.ok) throw new Error(`TTS ${resp.status}`);
+  if (!resp.ok) throw new Error(`TTS ${resp.status}: ${resp.statusText}`);
   const blob = await resp.blob();
   const url = URL.createObjectURL(blob);
   const audio = new Audio(url);
   return new Promise((resolve) => {
     audio.addEventListener('ended', () => { URL.revokeObjectURL(url); resolve(); });
-    audio.addEventListener('error', () => { URL.revokeObjectURL(url); resolve(); });
-    audio.play().catch(() => resolve());
+    audio.addEventListener('error', (e) => { console.warn('[TTS] audio playback error:', e); URL.revokeObjectURL(url); resolve(); });
+    audio.play().catch((e) => { console.warn('[TTS] play() rejected:', e); resolve(); });
   });
 }
 
 // ── Browser fallback TTS ──
 function browserTTS(text: string): Promise<void> {
   if (!('speechSynthesis' in window)) return Promise.resolve();
+  // Cancel any stuck utterances first
+  speechSynthesis.cancel();
   return new Promise((resolve) => {
     const utter = new SpeechSynthesisUtterance(text);
     utter.rate = 0.95;
     utter.pitch = 1.0;
+    // Try to pick an English voice
+    const voices = speechSynthesis.getVoices();
+    const english = voices.find(v => v.lang.startsWith('en') && v.localService);
+    if (english) utter.voice = english;
     utter.onend = () => resolve();
-    utter.onerror = () => resolve();
+    utter.onerror = (e) => { console.warn('[TTS] browser fallback error:', e); resolve(); };
     speechSynthesis.speak(utter);
   });
 }
@@ -140,12 +147,13 @@ async function processQueue() {
 export async function speakScoobi(
   ttsText: string | undefined,
   urgent = false,
+  skipDedup = false,
 ): Promise<void> {
   if (!ttsText) return;
 
-  // General text dedup (urgent bypasses)
-  if (!urgent && isTextDuplicate(ttsText)) return;
-  recordText(ttsText);
+  // General text dedup (urgent and skipDedup bypass)
+  if (!urgent && !skipDedup && isTextDuplicate(ttsText)) return;
+  if (!skipDedup) recordText(ttsText);
 
   if (urgent) {
     queue.unshift({ text: ttsText, urgent: true });

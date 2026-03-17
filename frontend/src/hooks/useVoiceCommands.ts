@@ -153,8 +153,8 @@ export function useVoiceCommands(options: UseVoiceCommandsOptions) {
         setLastIntent(intent);
 
         if (intent) {
-          // Respond with TTS
-          speakScoobi(RESPONSES[intent], false);
+          // Respond with TTS (skipDedup=true since user explicitly spoke)
+          speakScoobi(RESPONSES[intent], false, true);
 
           // Execute the command
           switch (intent) {
@@ -166,7 +166,7 @@ export function useVoiceCommands(options: UseVoiceCommandsOptions) {
             // explain_modes, introduce, help — TTS only, no action
           }
         } else {
-          speakScoobi(RESPONSES.not_understood, false);
+          speakScoobi(RESPONSES.not_understood, false, true);
         }
       }
     };

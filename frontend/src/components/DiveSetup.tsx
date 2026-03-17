@@ -170,6 +170,16 @@ export function DiveSetup({ onStartDive, backendConnected }: DiveSetupProps) {
           <span className="hud-text text-[8px]">{backendConnected ? 'BACKEND CONNECTED' : 'CONNECTING...'}</span>
         </div>
 
+        {/* Browser warning for non-Chrome */}
+        {!voice.isSupported && (
+          <div className="flex items-center gap-2 px-4 py-3 glass-panel border-dive-orange/30 rounded-xl">
+            <AlertTriangle className="w-4 h-4 text-dive-orange flex-shrink-0" />
+            <p className="text-[10px] text-white/70">
+              Voice commands require <span className="text-dive-orange font-bold">Google Chrome</span>. Switch browsers for the full Scoobi experience.
+            </p>
+          </div>
+        )}
+
         {/* Voice Command Button */}
         {voice.isSupported && (
           <div className="flex flex-col items-center gap-2">

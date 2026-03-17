@@ -82,8 +82,8 @@ async def text_to_speech(req: TTSRequest):
     """Proxy text to ElevenLabs TTS and return audio/mpeg bytes."""
     if not ELEVENLABS_API_KEY:
         return Response(status_code=503, content="ElevenLabs API key not configured")
-    if len(req.text) > 200:
-        return Response(status_code=400, content="Text exceeds 200 character limit")
+    if len(req.text) > 500:
+        return Response(status_code=400, content="Text exceeds 500 character limit")
 
     voice_settings = {
         "stability": 0.25 if req.urgent else 0.35,
