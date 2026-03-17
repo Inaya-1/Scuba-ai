@@ -371,7 +371,8 @@ export function DiveSetup({ onStartDive, backendConnected }: DiveSetupProps) {
 /** Send map to backend WebSocket for analysis */
 async function sendMapToBackend(base64: string): Promise<any> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${proto}://${window.location.host}/ws`);
     const timeout = setTimeout(() => { ws.close(); reject(new Error('Timeout')); }, 30000);
 
     ws.onopen = () => {

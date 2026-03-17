@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 _client = None
 
 # Timeout for each Gemini API call (seconds). Prevents hung threads.
-GEMINI_TIMEOUT_S = 15
+GEMINI_TIMEOUT_S = 30
 
 
 def get_client() -> genai.Client:
