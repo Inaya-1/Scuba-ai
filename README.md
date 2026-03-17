@@ -209,7 +209,8 @@ Scuba-ai/
 │   └── pyproject.toml
 ├── Dockerfile                # Multi-stage build
 ├── app.yaml                  # App Engine config (gitignored)
-└── ARCHITECTURE.md           # Detailed system diagram
+├── CLAUDE.md                 # AI assistant project context
+└── docs/                    # Architecture, persona, tech stack docs
 ```
 
 ---
